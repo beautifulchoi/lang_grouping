@@ -33,40 +33,46 @@ def run(cfg: DictConfig):
         cfg.dataset.model_path = cfg.dataset.model_path + f"_{str(cfg.dataset.feature_level)}"
         cfg.dataset.lf_path = os.path.join(os.path.join(cfg.dataset.source_path, cfg.dataset.language_features_name))
     
-    render_sets(cfg.dataset, cfg.iteration, cfg.pipe, cfg.skip_train, cfg.skip_test, cfg)
+    render_sets(cfg.dataset, cfg.iteration, cfg.pipe, cfg.skip_train, cfg.skip_test, cfg.opt)
 
 #TODO : render set grouping에 맞게 변경
-def render_set(model_path, source_path, name, iteration, views, gaussians, pipeline, background, args):
-    render_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders")
-    gts_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt")
-    render_npy_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders_npy")
-    gts_npy_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt_npy")
+def render_set(dataset, name, iteration, views, gaussians, pipeline, background, opt):
+    render_path = os.path.join(dataset.model_path, name, "ours_{}".format(iteration), "renders")
+    gts_path = os.path.join(dataset.model_path, name, "ours_{}".format(iteration), "gt")
+    render_npy_path = os.path.join(dataset.model_path, name, "ours_{}".format(iteration), "renders_npy")
+    gts_npy_path = os.path.join(dataset.model_path, name, "ours_{}".format(iteration), "gt_npy")
+    colormask_path = os.path.join(dataset.model_pathh, name, "ours_{}".format(iteration), "objects_feature16")
+    gt_colormask_path = os.path.join(dataset.model_path, name, "ours_{}".format(iteration), "gt_objects_color")
+    pred_obj_path = os.path.join(dataset.model_path, name, "ours_{}".format(iteration), "objects_pred")
 
     makedirs(render_npy_path, exist_ok=True)
     makedirs(gts_npy_path, exist_ok=True)
     makedirs(render_path, exist_ok=True)
     makedirs(gts_path, exist_ok=True)
+    makedirs(colormask_path, exist_ok=True)
+    makedirs(gt_colormask_path, exist_ok=True)
+    makedirs(pred_obj_path, exist_ok=True)
 
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
-        output = render(view, gaussians, pipeline, background, args)
+        output = render(view, gaussians, pipeline, background, opt)
 
-        if not args.include_feature:
+        if not opt.include_lang_feature:
             rendering = output["render"]
         else:
             rendering = output["language_feature_image"]
             
-        if not args.include_feature:
+        if not opt.include_lang_feature:
             gt = view.original_image[0:3, :, :]
             
         else:
-            gt, mask = view.get_language_feature(os.path.join(source_path, args.language_features_name), feature_level=args.feature_level)
+            gt, mask = view.get_language_feature(os.path.join(dataset.source_path, dataset.language_features_name), feature_level=dataset.feature_level)
 
         np.save(os.path.join(render_npy_path, '{0:05d}'.format(idx) + ".npy"),rendering.permute(1,2,0).cpu().numpy())
         np.save(os.path.join(gts_npy_path, '{0:05d}'.format(idx) + ".npy"),gt.permute(1,2,0).cpu().numpy())
         torchvision.utils.save_image(rendering, os.path.join(render_path, '{0:05d}'.format(idx) + ".png"))
         torchvision.utils.save_image(gt, os.path.join(gts_path, '{0:05d}'.format(idx) + ".png"))
                
-def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool, args):
+def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool, opt):
     with torch.no_grad():
         gaussians = GaussianModel(dataset.sh_degree)
         scene = Scene(dataset, gaussians, shuffle=False)
@@ -78,16 +84,16 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
 
         checkpoint = os.path.join(dataset.model_path, f'chkpnt{iteration}.pth')
         (model_params, first_iter) = torch.load(checkpoint)
-        gaussians.restore(model_params, args, mode='test')
+        gaussians.restore(model_params, opt, mode='test')
         
         bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
         background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
         if not skip_train:
-             render_set(dataset.model_path, dataset.source_path, "train", scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background, args)
+             render_set(dataset, "train", scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background, opt)
 
         if not skip_test:
-             render_set(dataset.model_path, dataset.source_path, "test", scene.loaded_iter, scene.getTestCameras(), gaussians, pipeline, background, args)
+             render_set(dataset, "test", scene.loaded_iter, scene.getTestCameras(), gaussians, pipeline, background, opt)
 
 if __name__ == "__main__":
     # Set up command line argument parser

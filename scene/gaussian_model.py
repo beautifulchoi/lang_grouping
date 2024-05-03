@@ -65,7 +65,7 @@ class GaussianModel:
 
     def capture(self, include_lang_feature=False):
         if include_lang_feature:
-            assert self._language_feature is not None, "language feature should be needed"
+            assert self._language_feature is not False, "language feature should be needed"
             return (
                 self.active_sh_degree,
                 self._xyz,
@@ -101,21 +101,38 @@ class GaussianModel:
     
     def restore(self, model_args, training_args, mode='train'): #load model's parameter from ckpt
         if training_args.include_lang_feature: # time to train lang feature. obj still need for contrastive learning
-            (self.active_sh_degree, 
-            self._xyz, 
-            self._features_dc, 
-            self._features_rest,
-            self._scaling, 
-            self._rotation, 
-            self._opacity,
-            self._objects_dc,#
-            self._language_feature,
-            self.max_radii2D, 
-            xyz_gradient_accum, 
-            denom,
-            opt_dict, 
-            self.spatial_lr_scale) = model_args
-            
+            if len(model_args)==14: #load lang feauture
+                (self.active_sh_degree, 
+                self._xyz, 
+                self._features_dc, 
+                self._features_rest,
+                self._scaling, 
+                self._rotation, 
+                self._opacity,
+                self._objects_dc,#
+                self._language_feature,
+                self.max_radii2D, 
+                xyz_gradient_accum, 
+                denom,
+                opt_dict, 
+                self.spatial_lr_scale) = model_args
+            elif len(model_args)==13: #first lang feature learn 
+                (self.active_sh_degree, 
+                self._xyz, 
+                self._features_dc, 
+                self._features_rest,
+                self._scaling, 
+                self._rotation, 
+                self._opacity,
+                self._objects_dc,#
+                self.max_radii2D, 
+                xyz_gradient_accum, 
+                denom,
+                opt_dict, 
+                self.spatial_lr_scale) = model_args
+            else:
+                ValueError("incorrect ckpt is loaded. check again")
+
         else: # without lang feature, train GS with grouping first
             (self.active_sh_degree, 
             self._xyz, 

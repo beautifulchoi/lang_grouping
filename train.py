@@ -46,7 +46,13 @@ def run(cfg: DictConfig):
     network_gui.init(cfg.ip, cfg.port)
     torch.autograd.set_detect_anomaly(cfg.detect_anomaly)
     seed_everything(0)
-    #cfg.model_path = cfg.model_path + f"_{str(cfg.feature_level)}"
+    
+    if cfg.start_checkpoint:
+        cfg.start_checkpoint = os.path.join(cfg.dataset.model_path, f"chkpnt{cfg.start_checkpoint}.pth")
+
+    if cfg.dataset.feature_level:
+        cfg.dataset.model_path = cfg.dataset.model_path + f"_{str(cfg.dataset.feature_level)}"
+        cfg.dataset.lf_path = os.path.join(os.path.join(cfg.dataset.source_path, cfg.dataset.language_features_name))
     #start train
     training(cfg.dataset, cfg.opt, cfg.pipe, cfg.test_iterations, 
              cfg.save_iterations, cfg.checkpoint_iterations,cfg.start_checkpoint, cfg.debug_from)
@@ -62,14 +68,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     classifier = torch.nn.Conv2d(gaussians.num_objects, num_classes, kernel_size=1)
     cls_criterion = torch.nn.CrossEntropyLoss(reduction='none')
     cls_optimizer = torch.optim.Adam(classifier.parameters(), lr=5e-4)
-    classifier.cuda()
 
     if opt.include_lang_feature:
         if not checkpoint:
             raise ValueError("checkpoint missing!!!!!")
+        
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
-        if len(model_params) == 12 and opt.include_lang_feature:
+        if len(model_params) == 13 and opt.include_lang_feature:
             first_iter = 0
         gaussians.restore(model_params, opt)
         
@@ -123,25 +129,18 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             gt_language_feature, language_feature_mask = viewpoint_cam.get_language_feature(language_feature_dir=dataset.lf_path, feature_level=dataset.feature_level)
             Ll1 = l1_loss(language_feature*language_feature_mask, gt_language_feature*language_feature_mask)            
             loss = Ll1
+            
         else:
             gt_image = viewpoint_cam.original_image.cuda()
             Ll1 = l1_loss(image, gt_image)
             loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
 
-        #obj loss
-        gt_obj = viewpoint_cam.objects.cuda().long()
-        logits = classifier(objects)
-        loss_obj = cls_criterion(logits.unsqueeze(0), gt_obj.unsqueeze(0)).squeeze().mean()
-        loss_obj = loss_obj / torch.log(torch.tensor(num_classes))  # normalize to (0,1)
-        loss += loss_obj
-        loss_obj_3d = None
-
-        # if iteration % opt.reg3d_interval == 0:
-        #     # regularize at certain intervals
-        #     logits3d = classifier(gaussians.get_objects.permute(2,0,1))
-        #     prob_obj3d = torch.softmax(logits3d,dim=0).squeeze().permute(1,0)
-        #     loss_obj_3d = loss_cls_3d(gaussians.get_xyz.squeeze().detach(), prob_obj3d, opt.reg3d_k, opt.reg3d_lambda_val, opt.reg3d_max_points, opt.reg3d_sample_size)
-        #     loss += loss_obj_3d
+            #obj loss
+            gt_obj = viewpoint_cam.objects.cuda().long()
+            logits = classifier(objects)
+            obj_loss = cls_criterion(logits.unsqueeze(0), gt_obj.unsqueeze(0)).squeeze().mean()
+            obj_loss = obj_loss / torch.log(torch.tensor(num_classes))  # normalize to (0,1)
+            loss += obj_loss
 
         loss.backward() 
         iter_end.record()
@@ -155,7 +154,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 progress_bar.close()
 
             # Log and save
-            training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background, opt))
+            training_report(tb_writer, iteration, 
+                            Ll1, loss, l1_loss, obj_loss,
+                            iter_start.elapsed_time(iter_end), testing_iterations, scene, 
+                            render, (pipe, background, opt),
+                            num_classes, classifier, cls_criterion)
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
@@ -208,17 +211,14 @@ def prepare_output_and_logger(args):
     return tb_writer
 
 def training_report(tb_writer, iteration, 
-                    Ll1, loss, l1_loss, obj_loss, 
+                    Ll1, loss, l1_loss,
                     elapsed, testing_iterations, scene : Scene, 
                     renderFunc, renderArgs,
-                    num_classes, classifier, cls_criterion
                     ):
     if tb_writer:
         tb_writer.add_scalar('train_loss_patches/l1_loss', Ll1.item(), iteration)
-        tb_writer.add_scalar('train_loss_patches/obj_loss', obj_loss.item(), iteration)
         tb_writer.add_scalar('train_loss_patches/total_loss', loss.item(), iteration)
         tb_writer.add_scalar('iter_time', elapsed, iteration)
-
     # Report test and samples of training set
     if iteration in testing_iterations:
         print(f'testing for iter {iteration}')
@@ -239,26 +239,16 @@ def training_report(tb_writer, iteration,
                         if iteration == testing_iterations[0]:
                             tb_writer.add_images(config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name), gt_image[None], global_step=iteration)
                     l1_test += l1_loss(image, gt_image).mean().double()
-
-                    #object loss for classifier
-                    objects = renderFunc(viewpoint, scene.gaussians, *renderArgs)["render_object"]
-                    gt_obj = viewpoint.objects.cuda().long()
-                    logits = classifier(objects)
-                    loss_obj = cls_criterion(logits.unsqueeze(0), gt_obj.unsqueeze(0)).squeeze().mean()
-                    loss_obj = loss_obj / torch.log(torch.tensor(num_classes))  # normalize to (0,1)
-                    obj_test += loss_obj.mean().double()
-
                     psnr_test += psnr(image, gt_image).mean().double()
                 
                 psnr_test /= len(config['cameras'])
                 l1_test /= len(config['cameras']) 
-                obj_test /= len(config['cameras'])
 
                 print("\n[ITER {}] Evaluating {}: L1 {} PSNR {}".format(iteration, config['name'], l1_test, psnr_test))
                 if tb_writer:
                     tb_writer.add_scalar(config['name'] + '/loss_viewpoint - l1_loss', l1_test, iteration)
                     tb_writer.add_scalar(config['name'] + '/loss_viewpoint - psnr', psnr_test, iteration)
-                    tb_writer.add_scalar(config['name'] + '/loss_viewpoint - object', obj_test, iteration)
+
 
         if tb_writer:
             tb_writer.add_histogram("scene/opacity_histogram", scene.gaussians.get_opacity, iteration)

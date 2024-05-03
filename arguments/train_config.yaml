@@ -1,8 +1,8 @@
 # Model param
 dataset:
   sh_degree : 3
-  source_path : "/home/gaussian-grouping/data/lerf_mask/ramen" #dataset path
-  model_path : "/home/lang-grouping/output/lerf_mask/ramen" #output path
+  source_path : "/home/gaussian-grouping/data/lerf_mask/figurines" #dataset path
+  model_path : "/home/lang-grouping/output/lerf_mask/figurines" #output path
   language_features_name : "language_features_dim3" # compressed lang feature name
   images : "images"
   resolution : -1
@@ -10,6 +10,7 @@ dataset:
   feature_level : 1
   data_device : "cuda"
   eval : False
+  lf_path : ''
   object_path : "object_mask"
   num_classes : 256
   n_views : 100 
@@ -33,8 +34,8 @@ opt:
   opacity_lr : 0.05
   scaling_lr : 0.005
   language_feature_lr : 0.0025 #
-  object_lr : 0.0005
-  include_lang_feature : False #
+  object_lr : 0.0025 # 
+  include_lang_feature : True #
   rotation_lr : 0.001
   percent_dense : 0.01
   lambda_dssim : 0.2
@@ -53,14 +54,14 @@ opt:
 
 #User loccally option
 ip : 127.0.0.1
-port: 6011
+port: 6012
 debug_from : -1
 detect_anomaly: False
 test_iterations : [7_000, 30_000]
 save_iterations : [7_000, 30_000]
 quiet : False
 checkpoint_iterations : [7_000, 30_000]
-start_checkpoint : False
+start_checkpoint : 30000 # 30000 when language distil
 
 
 # No need to change
