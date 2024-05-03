@@ -1,13 +1,13 @@
 # Model param
 dataset:
   sh_degree : 3
-  source_path : "/home/gaussian-grouping/data/lerf_mask/figurines" #dataset path
-  model_path : "output/lerf_mask/figurines" #output path
+  source_path : "/home/gaussian-grouping/data/lerf_mask/ramen" #dataset path
+  model_path : "/home/lang-grouping/output/lerf_mask/ramen" #output path
   language_features_name : "language_features_dim3" # compressed lang feature name
   images : "images"
   resolution : -1
   white_background : False
-  feature_level : -1
+  feature_level : 1
   data_device : "cuda"
   eval : False
   object_path : "object_mask"
@@ -20,7 +20,7 @@ dataset:
 pipe:
   convert_SHs_python : False
   compute_cov3D_python : False
-  debug : True
+  debug : False
 
 #Optim param
 opt:
@@ -33,7 +33,8 @@ opt:
   opacity_lr : 0.05
   scaling_lr : 0.005
   language_feature_lr : 0.0025 #
-  include_feature : False #
+  object_lr : 0.0005
+  include_lang_feature : False #
   rotation_lr : 0.001
   percent_dense : 0.01
   lambda_dssim : 0.2

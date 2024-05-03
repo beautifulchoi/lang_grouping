@@ -1,0 +1,39 @@
+# Model param
+dataset:
+  sh_degree : 3
+  source_path : "/home/gaussian-grouping/data/lerf_mask/figurines" #dataset path
+  model_path : "/home/lang-grouping/output/lerf_mask/figurines" #output path
+  language_features_name : "language_features_dim3" # a
+  images : "images"
+  resolution : -1
+  white_background : False
+  feature_level : False
+  data_device : "cuda"
+  eval : False
+  lf_path : ''
+  object_path : "object_mask"
+  num_classes : 256
+  n_views : 100 
+  random_init : False
+  train_split : False
+  
+# Pipeline param
+pipe:
+  convert_SHs_python : False
+  compute_cov3D_python : False
+  debug : False
+
+#User loccally option
+iteration : 30000
+skip_train: False
+skip_test : False
+quiet : False
+include_feature: False
+
+
+# No need to change
+hydra:
+  run:
+    dir: "."
+  output_subdir: ~
+

@@ -20,7 +20,22 @@ from utils.general_utils import safe_state
 from argparse import ArgumentParser
 from arguments import ModelParams, PipelineParams, get_combined_args
 from gaussian_renderer import GaussianModel
+import hydra
+from omegaconf import OmegaConf, DictConfig
+from pytorch_lightning import seed_everything
 
+@hydra.main(config_path="arguments", config_name="render_config.yaml")
+def run(cfg: DictConfig):
+    #log.info(OmegaConf.to_yaml(cfg))
+    print("Rendering " + cfg.dataset.model_path)
+    seed_everything(0)
+    if cfg.dataset.feature_level:
+        cfg.dataset.model_path = cfg.dataset.model_path + f"_{str(cfg.dataset.feature_level)}"
+        cfg.dataset.lf_path = os.path.join(os.path.join(cfg.dataset.source_path, cfg.dataset.language_features_name))
+    
+    render_sets(cfg.dataset, cfg.iteration, cfg.pipe, cfg.skip_train, cfg.skip_test, cfg)
+
+#TODO : render set grouping에 맞게 변경
 def render_set(model_path, source_path, name, iteration, views, gaussians, pipeline, background, args):
     render_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders")
     gts_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt")
@@ -55,7 +70,13 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
     with torch.no_grad():
         gaussians = GaussianModel(dataset.sh_degree)
         scene = Scene(dataset, gaussians, shuffle=False)
-        checkpoint = os.path.join(args.model_path, 'chkpnt30000.pth')
+
+        num_classes = dataset.num_classes
+        classifier = torch.nn.Conv2d(gaussians.num_objects, num_classes, kernel_size=1)
+        classifier.cuda()
+        classifier.load_state_dict(torch.load(os.path.join(dataset.model_path,"point_cloud","iteration_"+str(scene.loaded_iter),"classifier.pth")))
+
+        checkpoint = os.path.join(dataset.model_path, f'chkpnt{iteration}.pth')
         (model_params, first_iter) = torch.load(checkpoint)
         gaussians.restore(model_params, args, mode='test')
         
@@ -71,18 +92,19 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
 if __name__ == "__main__":
     # Set up command line argument parser
     
-    parser = ArgumentParser(description="Testing script parameters")
-    model = ModelParams(parser, sentinel=True)
-    pipeline = PipelineParams(parser)
-    parser.add_argument("--iteration", default=-1, type=int)
-    parser.add_argument("--skip_train", action="store_true")
-    parser.add_argument("--skip_test", action="store_true")
-    parser.add_argument("--quiet", action="store_true")
-    parser.add_argument("--include_feature", action="store_true")
+    # parser = ArgumentParser(description="Testing script parameters")
+    # model = ModelParams(parser, sentinel=True)
+    # pipeline = PipelineParams(parser)
+    # parser.add_argument("--iteration", default=-1, type=int)
+    # parser.add_argument("--skip_train", action="store_true")
+    # parser.add_argument("--skip_test", action="store_true")
+    # parser.add_argument("--quiet", action="store_true")
+    # parser.add_argument("--include_feature", action="store_true")
 
-    args = get_combined_args(parser)
-    print("Rendering " + args.model_path)
+    # args = get_combined_args(parser)
+    # print("Rendering " + args.model_path)
 
-    safe_state(args.quiet)
+    # safe_state(args.quiet)
 
-    render_sets(model.extract(args), args.iteration, pipeline.extract(args), args.skip_train, args.skip_test, args)
+    # render_sets(model.extract(args), args.iteration, pipeline.extract(args), args.skip_train, args.skip_test, args)
+    run()

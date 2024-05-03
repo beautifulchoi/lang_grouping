@@ -63,8 +63,8 @@ class GaussianModel:
         self.spatial_lr_scale = 0
         self.setup_functions()
 
-    def capture(self, include_feature=False):
-        if include_feature:
+    def capture(self, include_lang_feature=False):
+        if include_lang_feature:
             assert self._language_feature is not None, "language feature should be needed"
             return (
                 self.active_sh_degree,
@@ -99,8 +99,8 @@ class GaussianModel:
                 self.spatial_lr_scale,
             )            
     
-    def restore(self, model_args, training_args, mode='train'):
-        if len(model_args) == 13: # 这是一个feature训练时保存的ckpt
+    def restore(self, model_args, training_args, mode='train'): #load model's parameter from ckpt
+        if training_args.include_lang_feature: # time to train lang feature. obj still need for contrastive learning
             (self.active_sh_degree, 
             self._xyz, 
             self._features_dc, 
@@ -115,7 +115,8 @@ class GaussianModel:
             denom,
             opt_dict, 
             self.spatial_lr_scale) = model_args
-        elif len(model_args) == 12: # 这是一个不训练feature保存的ckpt
+            
+        else: # without lang feature, train GS with grouping first
             (self.active_sh_degree, 
             self._xyz, 
             self._features_dc, 
@@ -123,13 +124,13 @@ class GaussianModel:
             self._scaling, 
             self._rotation, 
             self._opacity,
-            self._objects_dc,
+            self._objects_dc,#
             self.max_radii2D, 
             xyz_gradient_accum, 
             denom,
             opt_dict, 
             self.spatial_lr_scale) = model_args
-            if not training_args.include_feature: # 如果是以原始gs为初始化来训练feature的话，就不需要restore optimizer
+            if not training_args.include_lang_feature: # no need for a restore optimizer if trained without lang
                 self.optimizer.load_state_dict(opt_dict)
         
         if mode == 'train':
@@ -169,7 +170,7 @@ class GaussianModel:
         if self._language_feature is not None:
             return self._language_feature
         else:
-            raise ValueError('没有设置language feature')
+            raise ValueError('there is no lang feature configuration flag. set it True')
     
     def get_covariance(self, scaling_modifier = 1):
         return self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation)
@@ -198,8 +199,7 @@ class GaussianModel:
         rots[:, 0] = 1
 
         opacities = inverse_sigmoid(0.1 * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda"))
-        # language_feature = torch.zeros((fused_point_cloud.shape[0], 512), device="cuda")
-        
+
         self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
         self._features_dc = nn.Parameter(features[:,:,0:1].transpose(1, 2).contiguous().requires_grad_(True))
         self._features_rest = nn.Parameter(features[:,:,1:].transpose(1, 2).contiguous().requires_grad_(True))
@@ -214,15 +214,16 @@ class GaussianModel:
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         
-        if training_args.include_feature:
+        if training_args.include_lang_feature:
             if self._language_feature is None or self._language_feature.shape[0] != self._xyz.shape[0]:
                 language_feature = torch.zeros((self._xyz.shape[0], 3), device="cuda")
                 self._language_feature = nn.Parameter(language_feature.requires_grad_(True))
+            self._objects_dc.requires_grad = False # change not training obj feature while lang trained 
                 
             l = [
                 {'params': [self._language_feature], 
                  'lr': training_args.language_feature_lr, 
-                 "name": "language_feature"}, # TODO: training_args.language_feature_lr
+                 "name": "language_feature"}, 
             ]
             self._xyz.requires_grad_(False)
             self._features_dc.requires_grad_(False)
@@ -238,9 +239,9 @@ class GaussianModel:
                 {'params': [self._opacity], 'lr': training_args.opacity_lr, "name": "opacity"},
                 {'params': [self._scaling], 'lr': training_args.scaling_lr, "name": "scaling"},
                 {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"},
-                {'params': [self._objects_dc], 'lr': training_args.feature_lr, "name": "obj_dc"},
+                {'params': [self._objects_dc], 'lr': training_args.object_lr, "name": "obj_dc"},
             ]
-            assert self._language_feature is None, "在训练原始gs的时候language feature应该始终为None"
+            assert self._language_feature is None, "When training raw gs, the language feature should always be None"
 
         self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
         self.xyz_scheduler_args = get_expon_lr_func(lr_init=training_args.position_lr_init*self.spatial_lr_scale,
@@ -387,7 +388,6 @@ class GaussianModel:
         self._features_dc = optimizable_tensors["f_dc"]
         self._features_rest = optimizable_tensors["f_rest"]
         self._opacity = optimizable_tensors["opacity"]
-        # self._language_feature = optimizable_tensors["language_feature"]
         self._scaling = optimizable_tensors["scaling"]
         self._rotation = optimizable_tensors["rotation"]
         self._objects_dc = optimizable_tensors["obj_dc"] #
