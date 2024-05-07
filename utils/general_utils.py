@@ -136,10 +136,12 @@ def find_overlap_cls(obj1: torch.Tensor, obj2: torch.Tensor):
     """
     find overlapped class between two masks
     
-    param
-     - obj1,2: GT class segmentation map
+    param:
+      obj1,2: GT class segmentation map
      
-    return: overlapped class mask map
+    return:
+      obj_mask1,2: overlapped class mask map
+      overlapped_cls: overlapped class idx
     """
 
     cls1 = torch.unique(obj1)
@@ -151,4 +153,4 @@ def find_overlap_cls(obj1: torch.Tensor, obj2: torch.Tensor):
     obj_mask1 = torch.where(torch.isin(obj1, overlapped_cls), obj1, torch.tensor(0))
     obj_mask2 = torch.where(torch.isin(obj1, overlapped_cls), obj1, torch.tensor(0))
 
-    return obj_mask1, obj_mask2
+    return obj_mask1, obj_mask2, overlapped_cls

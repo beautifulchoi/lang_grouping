@@ -13,11 +13,11 @@ sys.path.append("/home/lang-grouping")
 import os
 import torch
 from random import randint
-from utils.loss_utils import l1_loss, ssim, loss_cls_3d
+from utils.loss_utils import l1_loss, ssim, loss_cls_3d, contrastive_loss
 from gaussian_renderer import render, network_gui
 import sys
 from scene import Scene, GaussianModel
-from utils.general_utils import safe_state
+from utils.general_utils import safe_state, find_overlap_cls
 import uuid
 from tqdm import tqdm
 from utils.image_utils import psnr
@@ -116,8 +116,22 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # Pick a random Camera
         if not viewpoint_stack:
             viewpoint_stack = scene.getTrainCameras().copy()
-        viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
+        rand_idx=randint(0, len(viewpoint_stack)-1)
+        viewpoint_cam = viewpoint_stack.pop(rand_idx)
         
+        #multi view pick
+        if opt.contrastive:
+            if rand_idx==0:
+                related_idx= 1
+            elif rand_idx<3:
+                related_idx =  rand_idx +1
+            else:
+                related_idx=rand_idx
+                while(related_idx==rand_idx):
+                    related_idx = randint(rand_idx-2, rand_idx+3) 
+
+            viewpoint_cam_related = viewpoint_stack.pop(related_idx)
+
         # Render
         if (iteration - 1) == debug_from:
             pipe.debug = True
@@ -129,7 +143,21 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             gt_language_feature, language_feature_mask = viewpoint_cam.get_language_feature(language_feature_dir=dataset.lf_path, feature_level=dataset.feature_level)
             Ll1 = l1_loss(language_feature*language_feature_mask, gt_language_feature*language_feature_mask)            
             loss = Ll1
-            
+            if opt.contrastive and iteration % opt.contrastive.interval == 0:
+                gt_language_feature_related, language_feature_mask_related = viewpoint_cam_related.get_language_feature(language_feature_dir=dataset.lf_path, feature_level=dataset.feature_level)
+                gt_objects = viewpoint_cam.objects
+                gt_objects_related  = viewpoint_cam_related.objects
+                obj_mask, obj_mask_related , ovl_cls = find_overlap_cls(gt_objects, gt_objects_related)
+                
+                render_pkg_related = render(viewpoint_cam_related, gaussians, pipe, background, opt)
+                language_feature_related = render_pkg_related["language_feature_image"]
+                ovl_lang_feature=language_feature*obj_mask
+                ovl_lang_feature_related = language_feature_related*obj_mask_related
+                _contrast_loss = contrastive_loss(ovl_lang_feature, obj_mask, temperature = 100.)
+                _contrast_loss_related = contrastive_loss(ovl_lang_feature_related, obj_mask_related, temperature = 100.)
+                loss += 0.1*(_contrast_loss+ _contrast_loss_related) # 
+                
+
         else:
             gt_image = viewpoint_cam.original_image.cuda()
             Ll1 = l1_loss(image, gt_image)
@@ -138,10 +166,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             #obj loss
             gt_obj = viewpoint_cam.objects.cuda().long()
             logits = classifier(objects)
-            obj_loss = cls_criterion(logits.unsqueeze(0), gt_obj.unsqueeze(0)).squeeze().mean()
-            obj_loss = obj_loss / torch.log(torch.tensor(num_classes))  # normalize to (0,1)
-            loss += obj_loss
-
+            _obj_loss = cls_criterion(logits.unsqueeze(0), gt_obj.unsqueeze(0)).squeeze().mean()
+            _obj_loss = _obj_loss / torch.log(torch.tensor(num_classes))  # normalize to (0,1)
+            loss += _obj_loss
+            
         loss.backward() 
         iter_end.record()
         with torch.no_grad():

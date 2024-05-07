@@ -13,6 +13,8 @@ import torch
 import torch.nn.functional as F
 from torch.autograd import Variable
 from math import exp
+import numpy as np
+import random
 
 def l1_loss(network_output, gt):
     return torch.abs((network_output - gt)).mean()
@@ -62,6 +64,48 @@ def _ssim(img1, img2, window, window_size, channel, size_average=True):
     else:
         return ssim_map.mean(1).mean(1).mean(1)
 
+
+def _rbf_kernel(x1, x2, gamma=1.0):
+    diff = x1.unsqueeze(1) - x2.unsqueeze(0)
+    squared_diff = torch.sum(diff**2, dim=-1)
+    return torch.exp(-gamma * squared_diff)
+
+def contrastive_loss(features, objects, gamma=0.01, num_samples=4096): #검증 필요
+    loss = 0.0
+    for class_id in torch.unique(objects): # obj id 0인경우 > class_objects에서 마스킹 됨
+        class_objects = (objects == class_id).float() # 해당 클래스에 대한 픽셀들
+        num_obj_pixel = torch.sum(class_objects)
+        
+        class_features = features * class_objects.unsqueeze(-1)
+        class_features = torch.where(class_features>=0, class_features, 0) 
+        if num_obj_pixel <= 1:
+            continue
+        
+        sampled_indices = torch.randint(0, features.shape[0] * features.shape[1], (num_samples,)) #u개의 픽셀을 "전체에서" 뽑음 
+        
+        class_features = class_features.view(-1, class_features.shape[-1]) # (H*W , 3)
+        sampled_cls_indices = sampled_indices[class_objects.view(-1,1)[sampled_indices].squeeze(-1) == 1.] #샘플링한 픽셀 중에서 클래스에 해당하는 픽셀들 
+        sampled_class_features = class_features[sampled_cls_indices] # u+ 
+
+        features_flatten = features.view(-1, features.shape[-1]) 
+        sampled_features = features_flatten[sampled_indices] #u 
+        
+        positive_similarities = torch.exp(_rbf_kernel(sampled_features, sampled_class_features, gamma)) # u+ <-> u  , (4096, pos_pixel)
+        positive_similarities = positive_similarities.triu(diagonal=1) 
+        num_positive_pairs = torch.sum(positive_similarities > 0)
+        if num_positive_pairs > 0:
+            positive_loss = -torch.log(positive_similarities.sum())
+            loss += positive_loss
+
+        negative_similarities = torch.exp(_rbf_kernel(sampled_features, sampled_features, gamma))
+        negative_similarities = negative_similarities.triu(diagonal=1)
+        num_negative_pairs = torch.sum(negative_similarities > 0)
+        if num_negative_pairs > 0:
+            negative_loss = torch.log(negative_similarities.sum())
+            loss += negative_loss
+
+    return loss/num_samples
+    
 #gaussian grouping 3d loss
 def loss_cls_3d(features, predictions, k=5, lambda_val=2.0, max_points=200000, sample_size=800):
     """
