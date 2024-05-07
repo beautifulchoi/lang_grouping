@@ -62,7 +62,6 @@ def _ssim(img1, img2, window, window_size, channel, size_average=True):
     else:
         return ssim_map.mean(1).mean(1).mean(1)
 
-
 #gaussian grouping 3d loss
 def loss_cls_3d(features, predictions, k=5, lambda_val=2.0, max_points=200000, sample_size=800):
     """
@@ -106,3 +105,4 @@ def loss_cls_3d(features, predictions, k=5, lambda_val=2.0, max_points=200000, s
     normalized_loss = loss / num_classes
 
     return lambda_val * normalized_loss
+

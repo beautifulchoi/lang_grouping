@@ -131,3 +131,24 @@ def safe_state(silent):
     np.random.seed(0)
     torch.manual_seed(0)
     torch.cuda.set_device(torch.device("cuda:0"))
+
+def find_overlap_cls(obj1: torch.Tensor, obj2: torch.Tensor):
+    """
+    find overlapped class between two masks
+    
+    param
+     - obj1,2: GT class segmentation map
+     
+    return: overlapped class mask map
+    """
+
+    cls1 = torch.unique(obj1)
+    cls2 = torch.unique(obj2)
+
+    overlapped_cls = torch.from_numpy(np.intersect1d(cls1, cls2))
+    
+    #masking
+    obj_mask1 = torch.where(torch.isin(obj1, overlapped_cls), obj1, torch.tensor(0))
+    obj_mask2 = torch.where(torch.isin(obj1, overlapped_cls), obj1, torch.tensor(0))
+
+    return obj_mask1, obj_mask2
