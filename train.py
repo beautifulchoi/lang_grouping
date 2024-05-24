@@ -31,7 +31,8 @@ from pytorch_lightning import seed_everything
 from omegaconf import DictConfig, OmegaConf
 import logging
 import hydra
-#TODO : don't train sh object when training lang feature. 
+from hydra import initialize, compose, utils
+
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
@@ -39,18 +40,20 @@ except ImportError:
     TENSORBOARD_FOUND = False
     
 log = logging.getLogger(__name__)
+log.setLevel(logging.INFO)
 
-@hydra.main(config_path="arguments", config_name="train_config.yaml")
-def run(cfg: DictConfig):
+
+@hydra.main(config_path="arguments/train", config_name="train_config")
+def run(cfg: DictConfig) -> None:
     log.info(OmegaConf.to_yaml(cfg))
     network_gui.init(cfg.ip, cfg.port)
     torch.autograd.set_detect_anomaly(cfg.detect_anomaly)
     seed_everything(0)
-    
+
     if cfg.start_checkpoint:
         cfg.start_checkpoint = os.path.join(cfg.dataset.model_path, f"chkpnt{cfg.start_checkpoint}.pth")
 
-    if cfg.dataset.feature_level:
+    if cfg.dataset.feature_level and cfg.opt.include_lang_feature:
         cfg.dataset.model_path = cfg.dataset.model_path + f"_{str(cfg.dataset.feature_level)}"
         cfg.dataset.lf_path = os.path.join(os.path.join(cfg.dataset.source_path, cfg.dataset.language_features_name))
     #start train
@@ -113,24 +116,31 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if iteration % 1000 == 0:
             gaussians.oneupSHdegree()
 
-        # Pick a random Camera
+
+
+        # # Pick a random Camera
         if not viewpoint_stack:
             viewpoint_stack = scene.getTrainCameras().copy()
-        rand_idx=randint(0, len(viewpoint_stack)-1)
-        viewpoint_cam = viewpoint_stack.pop(rand_idx)
+        viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
         
-        #multi view pick
-        if opt.contrastive:
-            if rand_idx==0:
-                related_idx= 1
-            elif rand_idx<3:
-                related_idx =  rand_idx +1
-            else:
-                related_idx=rand_idx
-                while(related_idx==rand_idx):
-                    related_idx = randint(rand_idx-2, rand_idx+3) 
-
-            viewpoint_cam_related = viewpoint_stack.pop(related_idx)
+        # if not viewpoint_stack or len(viewpoint_stack) < 10:
+        #     viewpoint_stack = scene.getTrainCameras().copy()
+        # rand_idx=randint(0, len(viewpoint_stack)-1)
+        # viewpoint_cam = viewpoint_stack.pop(rand_idx)
+        
+        # #multi view pick
+        # if opt.contrastive:
+        #     if rand_idx==0:
+        #         related_idx= 1
+        #     elif rand_idx<3:
+        #         related_idx =  rand_idx +1
+        #     else:
+        #         related_idx=rand_idx
+        #         while(related_idx==rand_idx):
+        #             related_idx = randint(rand_idx-2, rand_idx+3) 
+        #             if related_idx >=len(viewpoint_stack) or related_idx<0: # retry if not valid idx
+        #                 related_idx = rand_idx
+        #     viewpoint_cam_related = viewpoint_stack.pop(related_idx)
 
         # Render
         if (iteration - 1) == debug_from:
@@ -153,23 +163,26 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 language_feature_related = render_pkg_related["language_feature_image"]
                 ovl_lang_feature=language_feature*obj_mask
                 ovl_lang_feature_related = language_feature_related*obj_mask_related
-                _contrast_loss = contrastive_loss(ovl_lang_feature, obj_mask, temperature = 100.)
-                _contrast_loss_related = contrastive_loss(ovl_lang_feature_related, obj_mask_related, temperature = 100.)
-                loss += 0.1*(_contrast_loss+ _contrast_loss_related) # 
-                
 
+                _contrast_loss = contrastive_loss(ovl_lang_feature.permute(1,2,0), obj_mask) # lang feature: 3 728 986 // obj_mask : 728 986
+                _contrast_loss_related = contrastive_loss(ovl_lang_feature_related.permute(1,2,0), obj_mask_related)
+                contrast_loss = 2*(_contrast_loss+ _contrast_loss_related)
+                loss += contrast_loss # 
+                log.info(f"feature - contrastive loss: {contrast_loss}")
+                log.info(f"feature - L1 loss: {Ll1}")
         else:
             gt_image = viewpoint_cam.original_image.cuda()
-            Ll1 = l1_loss(image, gt_image)
+            Ll1 = l1_loss(image, gt_image)            
             loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
-
+            log.info(f"photometric loss: {loss}")
             #obj loss
             gt_obj = viewpoint_cam.objects.cuda().long()
             logits = classifier(objects)
             _obj_loss = cls_criterion(logits.unsqueeze(0), gt_obj.unsqueeze(0)).squeeze().mean()
             _obj_loss = _obj_loss / torch.log(torch.tensor(num_classes))  # normalize to (0,1)
             loss += _obj_loss
-            
+            log.info(f"object loss: {_obj_loss}")
+        
         loss.backward() 
         iter_end.record()
         with torch.no_grad():
@@ -190,7 +203,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
-
+            #log on local too
+            log.info(f"iteration {iteration}/{opt.iterations+1}, total loss: {loss}")
             # Densification
             if not opt.include_lang_feature:
                 if iteration < opt.densify_until_iter:
@@ -216,24 +230,27 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
                 torch.save((gaussians.capture(opt.include_lang_feature), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
             
-def prepare_output_and_logger(args):    
-    if not args.model_path:
+def prepare_output_and_logger(dataset):    # 
+    if not dataset.model_path:
         if os.getenv('OAR_JOB_ID'):
             unique_str=os.getenv('OAR_JOB_ID')
         else:
             unique_str = str(uuid.uuid4())
-        args.model_path = os.path.join("./output/", unique_str[0:10])
+        dataset.model_path = os.path.join("./output/", unique_str[0:10])
         
     # Set up output folder
-    print("Output folder: {}".format(args.model_path))
-    os.makedirs(args.model_path, exist_ok = True)
-    with open(os.path.join(args.model_path, "cfg_args"), 'w') as cfg_log_f:
-        cfg_log_f.write(str(Namespace(**vars(args))))
+    print("Output folder: {}".format(dataset.model_path))
+    os.makedirs(dataset.model_path, exist_ok = True)
+    dataset_yaml = OmegaConf.to_yaml(dataset)
+    with open(os.path.join(dataset.model_path, "cfg_args.yaml"), 'w') as cfg_log_f:
+        cfg_log_f.write(dataset_yaml)
+    # with open(os.path.join(dataset.model_path, "cfg_args"), 'w') as cfg_log_f:
+    #     cfg_log_f.write(str(Namespace(**vars(dataset))))
 
     # Create Tensorboard writer
     tb_writer = None
     if TENSORBOARD_FOUND:
-        tb_writer = SummaryWriter(args.model_path)
+        tb_writer = SummaryWriter(dataset.model_path)
     else:
         print("Tensorboard not available: not logging progress")
     return tb_writer
@@ -258,7 +275,7 @@ def training_report(tb_writer, iteration,
             if config['cameras'] and len(config['cameras']) > 0:
                 l1_test = 0.0
                 psnr_test = 0.0
-                obj_test = 0.0
+
                 for idx, viewpoint in enumerate(config['cameras']):
                     image = torch.clamp(renderFunc(viewpoint, scene.gaussians, *renderArgs)["render"], 0.0, 1.0)
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
@@ -311,7 +328,6 @@ if __name__ == "__main__":
     #network_gui.init(args.ip, args.port)
     #torch.autograd.set_detect_anomaly(args.detect_anomaly)
     #training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from)
-
     run()
     # All done
     print("\nTraining complete.")
