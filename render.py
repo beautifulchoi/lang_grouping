@@ -24,7 +24,7 @@ import hydra
 from omegaconf import OmegaConf, DictConfig
 from pytorch_lightning import seed_everything
 
-@hydra.main(config_path="arguments", config_name="render_config.yaml")
+@hydra.main(config_path="arguments/render", config_name="render_config.yaml")
 def run(cfg: DictConfig):
     #log.info(OmegaConf.to_yaml(cfg))
     print("Rendering " + cfg.dataset.model_path)
@@ -41,23 +41,23 @@ def render_set(dataset, name, iteration, views, gaussians, pipeline, background,
     gts_path = os.path.join(dataset.model_path, name, "ours_{}".format(iteration), "gt")
     render_npy_path = os.path.join(dataset.model_path, name, "ours_{}".format(iteration), "renders_npy")
     gts_npy_path = os.path.join(dataset.model_path, name, "ours_{}".format(iteration), "gt_npy")
-    colormask_path = os.path.join(dataset.model_pathh, name, "ours_{}".format(iteration), "objects_feature16")
-    gt_colormask_path = os.path.join(dataset.model_path, name, "ours_{}".format(iteration), "gt_objects_color")
-    pred_obj_path = os.path.join(dataset.model_path, name, "ours_{}".format(iteration), "objects_pred")
+    # colormask_path = os.path.join(dataset.model_pathh, name, "ours_{}".format(iteration), "objects_feature16")
+    # gt_colormask_path = os.path.join(dataset.model_path, name, "ours_{}".format(iteration), "gt_objects_color")
+    # pred_obj_path = os.path.join(dataset.model_path, name, "ours_{}".format(iteration), "objects_pred")
 
     makedirs(render_npy_path, exist_ok=True)
     makedirs(gts_npy_path, exist_ok=True)
     makedirs(render_path, exist_ok=True)
     makedirs(gts_path, exist_ok=True)
-    makedirs(colormask_path, exist_ok=True)
-    makedirs(gt_colormask_path, exist_ok=True)
-    makedirs(pred_obj_path, exist_ok=True)
+    # makedirs(colormask_path, exist_ok=True)
+    # makedirs(gt_colormask_path, exist_ok=True)
+    # makedirs(pred_obj_path, exist_ok=True)
 
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
         output = render(view, gaussians, pipeline, background, opt)
 
         if not opt.include_lang_feature:
-            rendering = output["render"]
+            rendering = output["render"] 
         else:
             rendering = output["language_feature_image"]
             
@@ -78,9 +78,9 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
         scene = Scene(dataset, gaussians, shuffle=False)
 
         num_classes = dataset.num_classes
-        classifier = torch.nn.Conv2d(gaussians.num_objects, num_classes, kernel_size=1)
-        classifier.cuda()
-        classifier.load_state_dict(torch.load(os.path.join(dataset.model_path,"point_cloud","iteration_"+str(scene.loaded_iter),"classifier.pth")))
+        # classifier = torch.nn.Conv2d(gaussians.num_objects, num_classes, kernel_size=1)
+        # classifier.cuda()
+        # classifier.load_state_dict(torch.load(os.path.join(dataset.model_path,"point_cloud","iteration_"+str(scene.loaded_iter),"classifier.pth")))
 
         checkpoint = os.path.join(dataset.model_path, f'chkpnt{iteration}.pth')
         (model_params, first_iter) = torch.load(checkpoint)

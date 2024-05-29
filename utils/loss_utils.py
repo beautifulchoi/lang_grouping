@@ -70,21 +70,67 @@ def _rbf_kernel(x1, x2, gamma=1.0):
     squared_diff = torch.sum(diff**2, dim=-1)
     return torch.exp(-gamma * squared_diff)
 
-def contrastive_loss(features, objects, gamma=0.01, num_samples=4096): #검증 필요
+def contrastive_1d_loss(features, objects, gamma=0.01, num_samples=2048): 
     loss = 0.0
+    sampled_indices = torch.randint(0, features.shape[0] * features.shape[1], (num_samples,)) #u개의 픽셀을 "전체에서" 뽑음 
+    sampled_indices=sampled_indices.to(objects.device)
+    features_flatten = features.reshape(-1, features.shape[-1]) 
+
     for class_id in torch.unique(objects): # obj id 0인경우 > class_objects에서 마스킹 됨
-        class_objects = (objects == class_id).float() # 해당 클래스에 대한 픽셀들
-        num_obj_pixel = torch.sum(class_objects)
+        class_objects = objects == class_id # 해당 클래스 마스크
+        num_obj_pixel = torch.sum(class_objects) 
         
-        class_features = features * class_objects.unsqueeze(-1)
-        class_features = torch.where(class_features>=0, class_features, 0) 
+        class_features = features * class_objects.unsqueeze(-1) #클래스 픽셀 마스킹 
         if num_obj_pixel <= 1:
             continue
         
-        sampled_indices = torch.randint(0, features.shape[0] * features.shape[1], (num_samples,)) #u개의 픽셀을 "전체에서" 뽑음 
+        class_features = class_features.reshape(-1, class_features.shape[-1]) # (H*W , 3)
         
-        class_features = class_features.view(-1, class_features.shape[-1]) # (H*W , 3)
-        sampled_cls_indices = sampled_indices[class_objects.view(-1,1)[sampled_indices].squeeze(-1) == 1.] #샘플링한 픽셀 중에서 클래스에 해당하는 픽셀들 
+        class_objects_flatten = class_objects.flatten()
+        sampled_cls_indices = sampled_indices[class_objects_flatten[sampled_indices] == 1. ] #샘플링한 픽셀 중에서 클래스에 해당하는 픽셀들 
+        sampled_class_features = class_features[sampled_cls_indices] # u+ 
+
+        sampled_features = features_flatten[sampled_indices] #u  : shape must be (4096,3)
+        
+        positive_similarities = torch.exp(_rbf_kernel(sampled_features, sampled_class_features, gamma)) # u+ <-> u  , (4096, pos_pixel)
+        positive_similarities = positive_similarities.triu(diagonal=1) 
+        num_positive_pairs = torch.sum(positive_similarities > 0)
+        if num_positive_pairs > 0:
+            positive_loss = -torch.log(positive_similarities.sum())
+            loss += positive_loss
+
+        negative_similarities = torch.exp(_rbf_kernel(sampled_features, sampled_features, gamma))
+        negative_similarities = negative_similarities.triu(diagonal=1)
+        num_negative_pairs = torch.sum(negative_similarities > 0)
+        if num_negative_pairs > 0:
+            negative_loss = torch.log(negative_similarities.sum())
+            loss += negative_loss
+
+        del class_objects, class_features, class_objects_flatten, sampled_cls_indices, sampled_class_features, sampled_features, positive_similarities, negative_similarities
+        
+        torch.cuda.empty_cache()
+
+    return loss/num_samples
+
+#NOTE algorithm pipeline is almost same but input is different(here should be segmentation map, which get in preprocess step)
+#TODO segmentation overlapping 을 어떻게 처리해야 하는가 - > mask overlap을 사용해야 할 것 같은데,,,
+def contrastive_semantic_loss(features, seg_map, gamma=0.01, num_samples=4096): #TODO object 별 grouping -> semantic 별 grouping 으로 변경
+    loss = 0.0
+    sampled_indices = torch.randint(0, features.shape[0] * features.shape[1], (num_samples,)) #u개의 픽셀을 "전체에서" 뽑음 
+
+    for class_id in torch.unique(seg_map): # obj id 0인경우 > class_objects에서 마스킹 됨
+        class_semantics = (seg_map == class_id).float() # 해당 클래스에 대한 픽셀들
+        num_semantic_pixel = torch.sum(class_semantics) 
+        
+        class_features = features * class_semantics.unsqueeze(-1)
+        class_features = torch.where(class_features>=0, class_features, 0) 
+        if num_semantic_pixel <= 1:
+            continue
+        
+        class_features = class_features.reshape(-1, class_features.shape[-1]) # (H*W , 3)
+        
+        sampled_indices=sampled_indices.to(class_semantics.device)
+        sampled_cls_indices = sampled_indices[class_semantics.view(-1,1)[sampled_indices].squeeze(-1) == 1.] #샘플링한 픽셀 중에서 클래스에 해당하는 픽셀들 
         sampled_class_features = class_features[sampled_cls_indices] # u+ 
 
         features_flatten = features.view(-1, features.shape[-1]) 
@@ -105,48 +151,4 @@ def contrastive_loss(features, objects, gamma=0.01, num_samples=4096): #검증 �
             loss += negative_loss
 
     return loss/num_samples
-    
-#gaussian grouping 3d loss
-def loss_cls_3d(features, predictions, k=5, lambda_val=2.0, max_points=200000, sample_size=800):
-    """
-    Compute the neighborhood consistency loss for a 3D point cloud using Top-k neighbors
-    and the KL divergence.
-    
-    :param features: Tensor of shape (N, D), where N is the number of points and D is the dimensionality of the feature.
-    :param predictions: Tensor of shape (N, C), where C is the number of classes.
-    :param k: Number of neighbors to consider.
-    :param lambda_val: Weighting factor for the loss.
-    :param max_points: Maximum number of points for downsampling. If the number of points exceeds this, they are randomly downsampled.
-    :param sample_size: Number of points to randomly sample for computing the loss.
-    
-    :return: Computed loss value.
-    """
-    # Conditionally downsample if points exceed max_points
-    if features.size(0) > max_points:
-        indices = torch.randperm(features.size(0))[:max_points]
-        features = features[indices]
-        predictions = predictions[indices]
-
-
-    # Randomly sample points for which we'll compute the loss
-    indices = torch.randperm(features.size(0))[:sample_size]
-    sample_features = features[indices]
-    sample_preds = predictions[indices]
-
-    # Compute top-k nearest neighbors directly in PyTorch
-    dists = torch.cdist(sample_features, features)  # Compute pairwise distances
-    _, neighbor_indices_tensor = dists.topk(k, largest=False)  # Get top-k smallest distances
-
-    # Fetch neighbor predictions using indexing
-    neighbor_preds = predictions[neighbor_indices_tensor]
-
-    # Compute KL divergence
-    kl = sample_preds.unsqueeze(1) * (torch.log(sample_preds.unsqueeze(1) + 1e-10) - torch.log(neighbor_preds + 1e-10))
-    loss = kl.sum(dim=-1).mean()
-
-    # Normalize loss into [0, 1]
-    num_classes = predictions.size(1)
-    normalized_loss = loss / num_classes
-
-    return lambda_val * normalized_loss
 

@@ -2,13 +2,13 @@
 dataset:
   sh_degree : 3
   source_path : "/home/gaussian-grouping/data/lerf_mask/figurines" #dataset path
-  model_path : "/home/lang-grouping/output/lerf_mask/figurines" #output path
-  language_features_name : "language_features_dim3" # a
+  model_path : "/home/lang-grouping/output/lerf_mask/figurines_standard" #output path
+  language_features_name : "language_features_dim3" 
   images : "images"
   resolution : -1
   white_background : False
-  feature_level : False
-  data_device : "cuda"
+  feature_level : 3 #TO DEAL WITH
+  data_device : "cuda" 
   eval : False
   lf_path : ''
   object_path : "object_mask"
@@ -23,12 +23,17 @@ pipe:
   compute_cov3D_python : False
   debug : False
 
+opt:
+  iterations : 30_000
+  include_lang_feature : True #TO DEAL WITH
+
+
 #User loccally option
 iteration : 30000
 skip_train: False
 skip_test : False
 quiet : False
-include_feature: False
+
 
 
 # No need to change

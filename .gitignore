@@ -13,3 +13,8 @@ release
 *.pth
 ckpts
 *.pt
+*.log
+compare*
+__pycache__
+eval_result*
+*.ipynb

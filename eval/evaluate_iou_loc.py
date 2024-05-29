@@ -7,7 +7,7 @@ import glob
 import random
 from collections import defaultdict
 from pathlib import Path
-from typing import Dict, Union
+from typing import Dict, List, Union
 from argparse import ArgumentParser
 import logging
 import cv2
@@ -17,11 +17,34 @@ import time
 from tqdm import tqdm
 
 import sys
-sys.path.append("..")
+sys.path.append("/home/lang-grouping")
 import colormaps
 from autoencoder.model import Autoencoder
 from openclip_encoder import OpenCLIPNetwork
 from utils import smooth, colormap_saving, vis_mask_save, polygon_to_mask, stack_mask, show_result
+
+import hydra
+from omegaconf import DictConfig, OmegaConf
+
+#TODO: refactoring lang grouping - with can do open voc 
+@hydra.main(config_path="../arguments/eval", config_name="eval_config")
+def run(cfg: DictConfig) -> None:
+    seed_everything(0)
+
+    # NOTE config setting
+    dataset_name = cfg.dataset_name
+    mask_thresh = cfg.mask_thresh
+    feat_dir = [os.path.join(cfg.feat_dir+f"_{i}", "train/ours_None/renders_npy") for i in range(1,4)] #change
+    output_path = os.path.join(cfg.output_dir, dataset_name)
+    ae_ckpt_path = os.path.join(cfg.ae_ckpt_dir, dataset_name, "ae_ckpt/best_ckpt.pth")
+    json_folder = os.path.join(cfg.json_folder, dataset_name)
+
+    timestamp = time.strftime('%Y%m%d_%H%M%S', time.localtime())
+    os.makedirs(output_path, exist_ok=True)
+    log_file = os.path.join(output_path, f'{timestamp}.log')
+    logger = get_logger(f'{dataset_name}', log_file=log_file, log_level=logging.INFO)
+    evaluate(feat_dir, output_path, ae_ckpt_path, json_folder, mask_thresh, cfg.encoder_dims, cfg.decoder_dims, logger)
+
 
 
 def get_logger(name, log_file=None, log_level=logging.INFO, file_mode='w'):
@@ -103,7 +126,7 @@ def activate_stream(sem_map,
         iou_lvl = np.zeros(n_head)
         mask_lvl = np.zeros((n_head, h, w))
         for i in range(n_head):
-            # NOTE 加滤波结果后的激活值图中找最大值点
+            # NOTE Find the maximum point in the activation value graph after adding the filtering result.
             scale = 30
             kernel = np.ones((scale,scale)) / (scale**2)
             np_relev = valid_map[i][k].cpu().numpy()
@@ -116,7 +139,7 @@ def activate_stream(sem_map,
             colormap_saving(valid_map[i][k].unsqueeze(-1), colormap_options,
                             output_path_relev)
             
-            # NOTE 与lerf一致，激活值低于0.5的认为是背景
+            # NOTE Consistent with lerf, activation values below 0.5 are considered background
             p_i = torch.clip(valid_map[i][k] - 0.5, 0, 1).unsqueeze(-1)
             valid_composited = colormaps.apply_colormap(p_i / (p_i.max() + 1e-6), colormaps.ColormapOptions("turbo"))
             mask = (valid_map[i][k] < 0.5).squeeze()
@@ -172,7 +195,7 @@ def lerf_localization(sem_map, image, clip_model, image_name, img_ann):
     for k in range(len(positives)):
         select_output = valid_map[:, k]
         
-        # NOTE 平滑后的激活值图中找最大值点
+        # NOTE Find the maximum point in the smoothed activation value plot
         scale = 30
         kernel = np.ones((scale,scale)) / (scale**2)
         np_relev = select_output.cpu().numpy()
@@ -203,9 +226,9 @@ def lerf_localization(sem_map, image, clip_model, image_name, img_ann):
             if flag != 0:
                 break
         
-        # NOTE 将平均后的结果与原结果相加，抑制噪声并保持激活边界清晰
+        # NOTE The averaged results are added to the original results to suppress noise and keep the activation boundaries clear
         avg_filtered = torch.from_numpy(avg_filtered[..., selec_head]).unsqueeze(-1).to(select_output.device)
-        torch_relev = 0.5 * (avg_filtered + select_output[selec_head].unsqueeze(-1))
+        torch_relev = 0.5 * (avg_filtered + select_output[selec_head].unsqueeze(-1)) # TODO error debugging
         p_i = torch.clip(torch_relev - 0.5, 0, 1)
         valid_composited = colormaps.apply_colormap(p_i / (p_i.max() + 1e-6), colormaps.ColormapOptions("turbo"))
         mask = (torch_relev < 0.5).squeeze()
@@ -215,6 +238,51 @@ def lerf_localization(sem_map, image, clip_model, image_name, img_ann):
         show_result(valid_composited.cpu().numpy(), coord_final,
                     img_ann[positives[k]]['bboxes'], save_path)
     return acc_num
+
+#TODO open voc 코드 진행중
+def open_vocabulary(feat_dir, queries:list[str], image_paths, output_path, ae_ckpt_path, mask_thresh, encoder_hidden_dims, decoder_hidden_dims):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    colormap_options = colormaps.ColormapOptions(
+        colormap="turbo",
+        normalize=True,
+        colormap_min=-1.0,
+        colormap_max=1.0,
+    )
+    image_shape = image_paths[0].shape # image path : train dir 
+
+    compressed_sem_feats = np.zeros((len(feat_dir), *image_shape), dtype=np.float32) #N, h, w, 3
+    for i in range(len(feat_dir)):
+        feat_paths_lvl = sorted(glob.glob(os.path.join(feat_dir[i], '*.npy')),
+                               key=lambda file_name: int(os.path.basename(file_name).split(".npy")[0]))
+
+        compressed_sem_feats[i] = np.load(feat_paths_lvl[i]) 
+
+    clip_model = OpenCLIPNetwork(device)
+    checkpoint = torch.load(ae_ckpt_path, map_location=device)
+    model = Autoencoder(encoder_hidden_dims, decoder_hidden_dims).to(device)
+    model.load_state_dict(checkpoint)
+    model.eval()
+    image_name.mkdir(exist_ok=True, parents=True)
+    for query, idx in enumerate(tqdm(queries)):
+        image_name = Path(output_path) / f'{query}'
+        image_name.mkdir(exist_ok=True, parents=True)
+        for img_path in range(len(image_paths)):
+            sem_feat = compressed_sem_feats[i, ...]
+            sem_feat = torch.from_numpy(sem_feat).float().to(device)
+            rgb_img = cv2.imread(img_path)[..., ::-1]
+            rgb_img = (rgb_img / 255.0).astype(np.float32)
+            rgb_img = torch.from_numpy(rgb_img).to(device)
+
+            with torch.no_grad():
+                lvl, h, w, _ = sem_feat.shape
+                restored_feat = model.decode(sem_feat.flatten(0, 2))
+                restored_feat = restored_feat.view(lvl, h, w, -1)           # 3x832x1264x512
+                clip_model.set_positives(queries)
+        
+                c_iou_list, c_lvl = activate_stream(restored_feat, rgb_img, clip_model, image_name, img_ann,
+                                                    thresh=mask_thresh, colormap_options=colormap_options)
+                acc_num_img = lerf_localization(restored_feat, rgb_img, clip_model, image_name, img_ann)
+
 
 
 def evaluate(feat_dir, output_path, ae_ckpt_path, json_folder, mask_thresh, encoder_hidden_dims, decoder_hidden_dims, logger):
@@ -234,7 +302,7 @@ def evaluate(feat_dir, output_path, ae_ckpt_path, json_folder, mask_thresh, enco
         feat_paths_lvl = sorted(glob.glob(os.path.join(feat_dir[i], '*.npy')),
                                key=lambda file_name: int(os.path.basename(file_name).split(".npy")[0]))
         for j, idx in enumerate(eval_index_list):
-            compressed_sem_feats[i][j] = np.load(feat_paths_lvl[idx])
+            compressed_sem_feats[i][j] = np.load(feat_paths_lvl[idx]) #TODO error : compressed_sem_feats 731 988 // rendered feature : 731 989
 
     # instantiate autoencoder and openclip
     clip_model = OpenCLIPNetwork(device)
@@ -299,40 +367,40 @@ def seed_everything(seed_value):
 
 
 if __name__ == "__main__":
-    seed_num = 42
-    seed_everything(seed_num)
-    
-    parser = ArgumentParser(description="prompt any label")
-    parser.add_argument("--dataset_name", type=str, default=None)
-    parser.add_argument('--feat_dir', type=str, default=None)
-    parser.add_argument("--ae_ckpt_dir", type=str, default=None)
-    parser.add_argument("--output_dir", type=str, default=None)
-    parser.add_argument("--json_folder", type=str, default=None)
-    parser.add_argument("--mask_thresh", type=float, default=0.4)
-    parser.add_argument('--encoder_dims',
-                        nargs = '+',
-                        type=int,
-                        default=[256, 128, 64, 32, 3],
-                        )
-    parser.add_argument('--decoder_dims',
-                        nargs = '+',
-                        type=int,
-                        default=[16, 32, 64, 128, 256, 256, 512],
-                        )
-    args = parser.parse_args()
+    # seed_num = 42
+    # seed_everything(seed_num)
+    # parser = ArgumentParser(description="prompt any label")
+    # parser.add_argument("--dataset_name", type=str, default=None)
+    # parser.add_argument('--feat_dir', type=str, default=None)
+    # parser.add_argument("--ae_ckpt_dir", type=str, default=None)
+    # parser.add_argument("--output_dir", type=str, default=None)
+    # parser.add_argument("--json_folder", type=str, default=None)
+    # parser.add_argument("--mask_thresh", type=float, default=0.4)
+    # parser.add_argument('--encoder_dims',
+    #                     nargs = '+',
+    #                     type=int,
+    #                     default=[256, 128, 64, 32, 3],
+    #                     )
+    # parser.add_argument('--decoder_dims',
+    #                     nargs = '+',
+    #                     type=int,
+    #                     default=[16, 32, 64, 128, 256, 256, 512],
+    #                     )
+    # args = parser.parse_args()
 
-    # NOTE config setting
-    dataset_name = args.dataset_name
-    mask_thresh = args.mask_thresh
-    feat_dir = [os.path.join(args.feat_dir, dataset_name+f"_{i}", "train/ours_None/renders_npy") for i in range(1,4)]
-    output_path = os.path.join(args.output_dir, dataset_name)
-    ae_ckpt_path = os.path.join(args.ae_ckpt_dir, dataset_name, "ae_ckpt/best_ckpt.pth")
-    json_folder = os.path.join(args.json_folder, dataset_name)
+    # # NOTE config setting
+    # dataset_name = args.dataset_name
+    # mask_thresh = args.mask_thresh
+    # feat_dir = [os.path.join(args.feat_dir, dataset_name+f"_{i}", "train/ours_None/renders_npy") for i in range(1,2)] #change
+    # output_path = os.path.join(args.output_dir, dataset_name)
+    # ae_ckpt_path = os.path.join(args.ae_ckpt_dir, dataset_name, "ae_ckpt/best_ckpt.pth")
+    # json_folder = os.path.join(args.json_folder, dataset_name)
 
-    # NOTE logger
-    timestamp = time.strftime('%Y%m%d_%H%M%S', time.localtime())
-    os.makedirs(output_path, exist_ok=True)
-    log_file = os.path.join(output_path, f'{timestamp}.log')
-    logger = get_logger(f'{dataset_name}', log_file=log_file, log_level=logging.INFO)
+    # # NOTE logger
+    # timestamp = time.strftime('%Y%m%d_%H%M%S', time.localtime())
+    # os.makedirs(output_path, exist_ok=True)
+    # log_file = os.path.join(output_path, f'{timestamp}.log')
+    # logger = get_logger(f'{dataset_name}', log_file=log_file, log_level=logging.INFO)
 
-    evaluate(feat_dir, output_path, ae_ckpt_path, json_folder, mask_thresh, args.encoder_dims, args.decoder_dims, logger)
+    # evaluate(feat_dir, output_path, ae_ckpt_path, json_folder, mask_thresh, args.encoder_dims, args.decoder_dims, logger)
+    run()

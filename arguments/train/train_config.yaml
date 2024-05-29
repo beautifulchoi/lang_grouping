@@ -2,7 +2,7 @@
 dataset:
   sh_degree : 3
   source_path : "/home/gaussian-grouping/data/lerf_mask/figurines" #dataset path
-  model_path : "/home/lang-grouping/output/lerf_mask/figurines" #output path
+  model_path : "/home/lang-grouping/output/lerf_mask/figurines_1view_contrastive" #output path
   language_features_name : "language_features_dim3" # compressed lang feature name
   images : "images"
   resolution : -1
@@ -25,6 +25,7 @@ pipe:
 
 #Optim param
 opt:
+  include_lang_feature : True #
   iterations : 30_000
   position_lr_init : 0.00016
   position_lr_final : 0.0000016
@@ -35,7 +36,6 @@ opt:
   scaling_lr : 0.005
   language_feature_lr : 0.0025 #
   object_lr : 0.0025 # 
-  include_lang_feature : True #
   rotation_lr : 0.001
   percent_dense : 0.01
   lambda_dssim : 0.2
@@ -59,13 +59,14 @@ detect_anomaly: False
 test_iterations : [7_000, 30_000]
 save_iterations : [7_000, 30_000]
 quiet : False
+use_wandb : True
 checkpoint_iterations : [7_000, 30_000]
 start_checkpoint : 30000 # 30000 when language distil
 
 
 # No need to change
 hydra:
-  run:
-    dir: "."
+  run: # singlue run mode. multi run 하고 싶으면 sweep키워드 사용
+    dir: ${dataset.model_path}_1 # output directory 
   output_subdir: ~
-
+#output subdir : .hydra 폴더의 이름을 바꿀 수 있음 ~는 안만들겠다는 뜻

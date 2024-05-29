@@ -13,7 +13,7 @@ sys.path.append("/home/lang-grouping")
 import os
 import torch
 from random import randint
-from utils.loss_utils import l1_loss, ssim, loss_cls_3d, contrastive_loss
+from utils.loss_utils import l1_loss, ssim, contrastive_1d_loss, contrastive_semantic_loss
 from gaussian_renderer import render, network_gui
 import sys
 from scene import Scene, GaussianModel
@@ -31,13 +31,15 @@ from pytorch_lightning import seed_everything
 from omegaconf import DictConfig, OmegaConf
 import logging
 import hydra
-from hydra import initialize, compose, utils
 
-try:
-    from torch.utils.tensorboard import SummaryWriter
-    TENSORBOARD_FOUND = True
-except ImportError:
-    TENSORBOARD_FOUND = False
+import wandb
+
+# try:
+#     from torch.utils.tensorboard import SummaryWriter
+#     TENSORBOARD_FOUND = True
+# except ImportError:
+#     TENSORBOARD_FOUND = False
+
     
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
@@ -56,11 +58,17 @@ def run(cfg: DictConfig) -> None:
     if cfg.dataset.feature_level and cfg.opt.include_lang_feature:
         cfg.dataset.model_path = cfg.dataset.model_path + f"_{str(cfg.dataset.feature_level)}"
         cfg.dataset.lf_path = os.path.join(os.path.join(cfg.dataset.source_path, cfg.dataset.language_features_name))
+    
+    if cfg.use_wandb:
+        wandb.init(project="gaussian-splatting")
+        wandb.config.args = cfg
+        wandb.run.name = cfg.dataset.model_path
+
     #start train
     training(cfg.dataset, cfg.opt, cfg.pipe, cfg.test_iterations, 
-             cfg.save_iterations, cfg.checkpoint_iterations,cfg.start_checkpoint, cfg.debug_from)
+             cfg.save_iterations, cfg.checkpoint_iterations, cfg.start_checkpoint, cfg.debug_from, cfg.use_wandb)
 
-def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
+def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, use_wandb = False):
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree)
@@ -71,6 +79,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     classifier = torch.nn.Conv2d(gaussians.num_objects, num_classes, kernel_size=1)
     cls_criterion = torch.nn.CrossEntropyLoss(reduction='none')
     cls_optimizer = torch.optim.Adam(classifier.parameters(), lr=5e-4)
+    classifier.cuda()
 
     if opt.include_lang_feature:
         if not checkpoint:
@@ -122,7 +131,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if not viewpoint_stack:
             viewpoint_stack = scene.getTrainCameras().copy()
         viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
-        
         # if not viewpoint_stack or len(viewpoint_stack) < 10:
         #     viewpoint_stack = scene.getTrainCameras().copy()
         # rand_idx=randint(0, len(viewpoint_stack)-1)
@@ -147,41 +155,55 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             pipe.debug = True
         render_pkg = render(viewpoint_cam, gaussians, pipe, background, opt)
         image, language_feature, viewspace_point_tensor, visibility_filter, radii, objects =\
-              render_pkg["render"], render_pkg["language_feature_image"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"], render_pkg["render_object"]
+              render_pkg["render"], render_pkg["language_feature_image"], render_pkg["viewspace_points"], \
+                render_pkg["visibility_filter"], render_pkg["radii"], render_pkg["render_object"]
         # Loss
+        contrast_loss = None
         if opt.include_lang_feature:
-            gt_language_feature, language_feature_mask = viewpoint_cam.get_language_feature(language_feature_dir=dataset.lf_path, feature_level=dataset.feature_level)
+            gt_language_feature, language_feature_mask, seg_map = viewpoint_cam.get_language_feature(language_feature_dir=dataset.lf_path, 
+                                                                                            feature_level=dataset.feature_level, need_segmap =True)
             Ll1 = l1_loss(language_feature*language_feature_mask, gt_language_feature*language_feature_mask)            
             loss = Ll1
+            log.info(f"feature - L1 loss: {Ll1}")
             if opt.contrastive and iteration % opt.contrastive.interval == 0:
-                gt_language_feature_related, language_feature_mask_related = viewpoint_cam_related.get_language_feature(language_feature_dir=dataset.lf_path, feature_level=dataset.feature_level)
-                gt_objects = viewpoint_cam.objects
-                gt_objects_related  = viewpoint_cam_related.objects
-                obj_mask, obj_mask_related , ovl_cls = find_overlap_cls(gt_objects, gt_objects_related)
-                
-                render_pkg_related = render(viewpoint_cam_related, gaussians, pipe, background, opt)
-                language_feature_related = render_pkg_related["language_feature_image"]
-                ovl_lang_feature=language_feature*obj_mask
-                ovl_lang_feature_related = language_feature_related*obj_mask_related
-
-                _contrast_loss = contrastive_loss(ovl_lang_feature.permute(1,2,0), obj_mask) # lang feature: 3 728 986 // obj_mask : 728 986
-                _contrast_loss_related = contrastive_loss(ovl_lang_feature_related.permute(1,2,0), obj_mask_related)
-                contrast_loss = 2*(_contrast_loss+ _contrast_loss_related)
-                loss += contrast_loss # 
+                gt_mask =  (seg_map * language_feature_mask).squeeze(0)
+                gt_mask = gt_mask.to(torch.uint8)
+                gt_objects = viewpoint_cam.objects #uint8
+                contrast_loss = contrastive_1d_loss(language_feature.permute(1,2,0), gt_mask.squeeze(0), num_samples=1024)
+                #contrast_loss = contrastive_1d_loss(language_feature.permute(1,2,0), gt_objects)
+                loss += contrast_loss
                 log.info(f"feature - contrastive loss: {contrast_loss}")
-                log.info(f"feature - L1 loss: {Ll1}")
+
+                # gt_language_feature_related, language_feature_mask_related = viewpoint_cam_related.get_language_feature(language_feature_dir=dataset.lf_path,
+                #                                                                                                         feature_level=dataset.feature_level)
+                #gt_objects = viewpoint_cam.objects
+                #gt_objects_related  = viewpoint_cam_related.objects
+                #obj_mask, obj_mask_related , ovl_cls = find_overlap_cls(gt_objects, gt_objects_related)
+                
+                #render_pkg_related = render(viewpoint_cam_related, gaussians, pipe, background, opt)
+                #language_feature_related = render_pkg_related["language_feature_image"]
+                #ovl_lang_feature=language_feature*obj_mask
+                #ovl_lang_feature_related = language_feature_related*obj_mask_related
+
+                #_contrast_loss = contrastive_loss(ovl_lang_feature.permute(1,2,0), obj_mask) # lang feature: 3 728 986 // obj_mask : 728 986
+                #_contrast_loss_related = contrastive_loss(ovl_lang_feature_related.permute(1,2,0), obj_mask_related)
+                #contrast_loss = 2*(_contrast_loss+ _contrast_loss_related)
+                #loss += contrast_loss # 
+                #log.info(f"feature - contrastive loss: {contrast_loss}")
+            
+
         else:
             gt_image = viewpoint_cam.original_image.cuda()
             Ll1 = l1_loss(image, gt_image)            
             loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
             log.info(f"photometric loss: {loss}")
             #obj loss
-            gt_obj = viewpoint_cam.objects.cuda().long()
-            logits = classifier(objects)
-            _obj_loss = cls_criterion(logits.unsqueeze(0), gt_obj.unsqueeze(0)).squeeze().mean()
-            _obj_loss = _obj_loss / torch.log(torch.tensor(num_classes))  # normalize to (0,1)
-            loss += _obj_loss
-            log.info(f"object loss: {_obj_loss}")
+            # gt_obj = viewpoint_cam.objects.cuda().long()
+            # logits = classifier(objects)
+            # _obj_loss = cls_criterion(logits.unsqueeze(0), gt_obj.unsqueeze(0)).squeeze().mean()
+            # _obj_loss = _obj_loss / torch.log(torch.tensor(num_classes))  # normalize to (0,1)
+            # loss += _obj_loss
+            # log.info(f"object loss: {_obj_loss}")
         
         loss.backward() 
         iter_end.record()
@@ -195,10 +217,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 progress_bar.close()
 
             # Log and save
-            training_report(tb_writer, iteration, 
+            training_report(use_wandb, iteration, 
                             Ll1, loss, l1_loss,
                             iter_start.elapsed_time(iter_end), testing_iterations, scene, 
-                            render, (pipe, background, opt)
+                            render, (pipe, background, opt), contrast_loss,
                             )
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
@@ -244,29 +266,22 @@ def prepare_output_and_logger(dataset):    #
     dataset_yaml = OmegaConf.to_yaml(dataset)
     with open(os.path.join(dataset.model_path, "cfg_args.yaml"), 'w') as cfg_log_f:
         cfg_log_f.write(dataset_yaml)
-    # with open(os.path.join(dataset.model_path, "cfg_args"), 'w') as cfg_log_f:
-    #     cfg_log_f.write(str(Namespace(**vars(dataset))))
 
-    # Create Tensorboard writer
-    tb_writer = None
-    if TENSORBOARD_FOUND:
-        tb_writer = SummaryWriter(dataset.model_path)
-    else:
-        print("Tensorboard not available: not logging progress")
-    return tb_writer
-
-def training_report(tb_writer, iteration, 
-                    Ll1, loss, l1_loss,
+# use wanb for report
+def training_report(use_wandb, iteration, Ll1, loss, l1_loss, 
                     elapsed, testing_iterations, scene : Scene, 
-                    renderFunc, renderArgs,
-                    ):
-    if tb_writer:
-        tb_writer.add_scalar('train_loss_patches/l1_loss', Ll1.item(), iteration)
-        tb_writer.add_scalar('train_loss_patches/total_loss', loss.item(), iteration)
-        tb_writer.add_scalar('iter_time', elapsed, iteration)
+                    renderFunc, renderArgs, loss_contrast= None):
+
+    if use_wandb:
+        if loss_contrast:
+            wandb.log({"train_loss_patches/l1_loss": Ll1.item(), "train_loss_patches/total_loss": loss.item(), 
+                       "train_loss_patches/loss_contrastive": loss_contrast.item(), "iter_time": elapsed, "iter": iteration})
+        else:
+            wandb.log({"train_loss_patches/l1_loss": Ll1.item(), "train_loss_patches/total_loss": loss.item(), 
+                       "iter_time": elapsed, "iter": iteration})
+    
     # Report test and samples of training set
     if iteration in testing_iterations:
-        print(f'testing for iter {iteration}')
         torch.cuda.empty_cache()
         validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras()}, 
                               {'name': 'train', 'cameras' : [scene.getTrainCameras()[idx % len(scene.getTrainCameras())] for idx in range(5, 30, 5)]})
@@ -275,29 +290,24 @@ def training_report(tb_writer, iteration,
             if config['cameras'] and len(config['cameras']) > 0:
                 l1_test = 0.0
                 psnr_test = 0.0
-
                 for idx, viewpoint in enumerate(config['cameras']):
                     image = torch.clamp(renderFunc(viewpoint, scene.gaussians, *renderArgs)["render"], 0.0, 1.0)
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
-                    if tb_writer and (idx < 5):
-                        tb_writer.add_images(config['name'] + "_view_{}/render".format(viewpoint.image_name), image[None], global_step=iteration)
-                        if iteration == testing_iterations[0]:
-                            tb_writer.add_images(config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name), gt_image[None], global_step=iteration)
+                    if use_wandb:
+                        if idx < 5:
+                            wandb.log({config['name'] + "_view_{}/render".format(viewpoint.image_name): [wandb.Image(image)]})
+                            if iteration == testing_iterations[0]:
+                                wandb.log({config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name): [wandb.Image(gt_image)]})
                     l1_test += l1_loss(image, gt_image).mean().double()
                     psnr_test += psnr(image, gt_image).mean().double()
-                
                 psnr_test /= len(config['cameras'])
-                l1_test /= len(config['cameras']) 
-
+                l1_test /= len(config['cameras'])
                 print("\n[ITER {}] Evaluating {}: L1 {} PSNR {}".format(iteration, config['name'], l1_test, psnr_test))
-                if tb_writer:
-                    tb_writer.add_scalar(config['name'] + '/loss_viewpoint - l1_loss', l1_test, iteration)
-                    tb_writer.add_scalar(config['name'] + '/loss_viewpoint - psnr', psnr_test, iteration)
-
-
-        if tb_writer:
-            tb_writer.add_histogram("scene/opacity_histogram", scene.gaussians.get_opacity, iteration)
-            tb_writer.add_scalar('total_points', scene.gaussians.get_xyz.shape[0], iteration)
+                
+                if use_wandb:
+                    wandb.log({config['name'] + "/loss_viewpoint - l1_loss": l1_test, config['name'] + "/loss_viewpoint - psnr": psnr_test})
+        if use_wandb:
+            wandb.log({"scene/opacity_histogram": scene.gaussians.get_opacity, "total_points": scene.gaussians.get_xyz.shape[0], "iter": iteration})
         torch.cuda.empty_cache()
 
 if __name__ == "__main__":

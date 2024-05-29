@@ -63,7 +63,7 @@ class Camera(nn.Module):
         else:
             self.objects = None
 
-    def get_language_feature(self, language_feature_dir, feature_level):
+    def get_language_feature(self, language_feature_dir, feature_level, need_segmap = False):
         language_feature_name = os.path.join(language_feature_dir, self.image_name)
         seg_map = torch.from_numpy(np.load(language_feature_name + '_s.npy'))
         feature_map = torch.from_numpy(np.load(language_feature_name + '_f.npy'))
@@ -96,8 +96,11 @@ class Camera(nn.Module):
             raise ValueError("feature_level=", feature_level)
         # point_feature = torch.cat((point_feature2, point_feature3, point_feature4), dim=-1).to('cuda')
         point_feature = point_feature1.reshape(self.image_height, self.image_width, -1).permute(2, 0, 1)
-       
-        return point_feature.cuda(), mask.cuda()
+        
+        if need_segmap:
+            return point_feature.cuda(), mask.cuda(), seg_map[feature_level].cuda()
+        
+        return point_feature.cuda(), mask.cuda() 
 
 class MiniCam:
     def __init__(self, width, height, fovy, fovx, znear, zfar, world_view_transform, full_proj_transform):
