@@ -131,65 +131,63 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if not viewpoint_stack:
             viewpoint_stack = scene.getTrainCameras().copy()
         viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
-        # if not viewpoint_stack or len(viewpoint_stack) < 10:
+            
+        # if not viewpoint_stack or len(viewpoint_stack) <2:
         #     viewpoint_stack = scene.getTrainCameras().copy()
         # rand_idx=randint(0, len(viewpoint_stack)-1)
         # viewpoint_cam = viewpoint_stack.pop(rand_idx)
         
         # #multi view pick
         # if opt.contrastive:
-        #     if rand_idx==0:
-        #         related_idx= 1
-        #     elif rand_idx<3:
-        #         related_idx =  rand_idx +1
-        #     else:
-        #         related_idx=rand_idx
-        #         while(related_idx==rand_idx):
-        #             related_idx = randint(rand_idx-2, rand_idx+3) 
-        #             if related_idx >=len(viewpoint_stack) or related_idx<0: # retry if not valid idx
-        #                 related_idx = rand_idx
-        #     viewpoint_cam_related = viewpoint_stack.pop(related_idx)
+        #     if rand_idx >= len(viewpoint_stack):
+        #         rand_idx-=1
+        #     viewpoint_cam_related = viewpoint_stack.pop(rand_idx) #위에서 하나 빠지므로 바로 앞 캠이 선택됨
 
         # Render
         if (iteration - 1) == debug_from:
             pipe.debug = True
         render_pkg = render(viewpoint_cam, gaussians, pipe, background, opt)
         image, language_feature, viewspace_point_tensor, visibility_filter, radii, objects =\
-              render_pkg["render"], render_pkg["language_feature_image"], render_pkg["viewspace_points"], \
+                render_pkg["render"], render_pkg["language_feature_image"], render_pkg["viewspace_points"], \
                 render_pkg["visibility_filter"], render_pkg["radii"], render_pkg["render_object"]
         # Loss
         contrast_loss = None
         if opt.include_lang_feature:
             gt_language_feature, language_feature_mask, seg_map = viewpoint_cam.get_language_feature(language_feature_dir=dataset.lf_path, 
-                                                                                            feature_level=dataset.feature_level, need_segmap =True)
+                                                                                                     feature_level=dataset.feature_level,
+                                                                                                     need_segmap=True)
             Ll1 = l1_loss(language_feature*language_feature_mask, gt_language_feature*language_feature_mask)            
             loss = Ll1
             log.info(f"feature - L1 loss: {Ll1}")
             if opt.contrastive and iteration % opt.contrastive.interval == 0:
-                gt_mask =  (seg_map * language_feature_mask).squeeze(0)
+                gt_mask = (seg_map * language_feature_mask).squeeze(0)
                 gt_mask = gt_mask.to(torch.uint8)
-                gt_objects = viewpoint_cam.objects #uint8
-                contrast_loss = contrastive_1d_loss(language_feature.permute(1,2,0), gt_mask.squeeze(0), num_samples=1024)
-                #contrast_loss = contrastive_1d_loss(language_feature.permute(1,2,0), gt_objects)
+                #gt_objects = viewpoint_cam.objects #uint8
+                contrast_loss = contrastive_1d_loss(language_feature.permute(1,2,0), gt_mask, num_samples=1024)
+                
                 loss += contrast_loss
                 log.info(f"feature - contrastive loss: {contrast_loss}")
 
-                # gt_language_feature_related, language_feature_mask_related = viewpoint_cam_related.get_language_feature(language_feature_dir=dataset.lf_path,
-                #                                                                                                         feature_level=dataset.feature_level)
-                #gt_objects = viewpoint_cam.objects
-                #gt_objects_related  = viewpoint_cam_related.objects
-                #obj_mask, obj_mask_related , ovl_cls = find_overlap_cls(gt_objects, gt_objects_related)
+                #multi view contrast 
+                # gt_language_feature_related, language_feature_mask_related, seg_map_related = viewpoint_cam_related.get_language_feature(language_feature_dir=dataset.lf_path,
+                #                                                                                                                             feature_level=dataset.feature_level,
+                #                                                                                                                             need_segmap =True)
+                # gt_objects = viewpoint_cam.objects
+                # gt_objects_related  = viewpoint_cam_related.objects
+                # obj_mask, obj_mask_related , ovl_cls = find_overlap_cls(gt_objects, gt_objects_related)
                 
-                #render_pkg_related = render(viewpoint_cam_related, gaussians, pipe, background, opt)
-                #language_feature_related = render_pkg_related["language_feature_image"]
-                #ovl_lang_feature=language_feature*obj_mask
-                #ovl_lang_feature_related = language_feature_related*obj_mask_related
+                # render_pkg_related = render(viewpoint_cam_related, gaussians, pipe, background, opt)
+                # language_feature_related = render_pkg_related["language_feature_image"]
+                # ovl_lang_feature=language_feature*obj_mask
+                # ovl_lang_feature_related = language_feature_related*obj_mask_related
+                # gt_mask_related =  (seg_map_related * language_feature_mask_related).squeeze(0)
+                # gt_mask_related = gt_mask_related.to(torch.uint8)
 
-                #_contrast_loss = contrastive_loss(ovl_lang_feature.permute(1,2,0), obj_mask) # lang feature: 3 728 986 // obj_mask : 728 986
-                #_contrast_loss_related = contrastive_loss(ovl_lang_feature_related.permute(1,2,0), obj_mask_related)
-                #contrast_loss = 2*(_contrast_loss+ _contrast_loss_related)
-                #loss += contrast_loss # 
-                #log.info(f"feature - contrastive loss: {contrast_loss}")
+                # _contrast_loss = contrastive_semantic_loss(ovl_lang_feature.permute(1,2,0), gt_mask) # lang feature: 3 728 986 // obj_mask : 728 986
+                # _contrast_loss_related = contrastive_semantic_loss(ovl_lang_feature_related.permute(1,2,0), gt_mask_related)
+                # contrast_loss = 0.5* (_contrast_loss + 0.5 * _contrast_loss_related)
+                # loss += contrast_loss # 
+                # log.info(f"feature - contrastive loss: {contrast_loss}")
             
 
         else:

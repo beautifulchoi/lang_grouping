@@ -56,11 +56,11 @@ ip : 127.0.0.1
 port: 6012
 debug_from : -1
 detect_anomaly: False
-test_iterations : [7_000, 30_000]
-save_iterations : [7_000, 30_000]
+test_iterations : [30_000]
+save_iterations : [30_000]
 quiet : False
 use_wandb : True
-checkpoint_iterations : [7_000, 30_000]
+checkpoint_iterations : [30_000]
 start_checkpoint : 30000 # 30000 when language distil
 
 

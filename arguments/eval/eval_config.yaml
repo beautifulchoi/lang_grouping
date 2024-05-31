@@ -1,8 +1,8 @@
 #eval param
 dataset_name: "figurines"
-feat_dir: "/home/lang-grouping/output/lerf_mask/figurines_standard"
+feat_dir: "/home/lang-grouping/output/lerf_mask/figurines_1view_contrastive"
 ae_ckpt_dir: "/home/lang-grouping/autoencoder/ckpt/lerf_mask"
-output_dir: "/home/lang-grouping/eval_result_contrastive1view"
+output_dir: "/home/lang-grouping/eval_result/contrastive1view"
 json_folder: "/home/gaussian-grouping/data/lerf_ovs/label"
 mask_thresh: 0.4
 
