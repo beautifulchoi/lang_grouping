@@ -71,7 +71,7 @@ def _rbf_kernel(x1, x2, gamma=1.0):
     return torch.exp(-gamma * squared_diff)
 
 
-# Note : only use feature_semgented mask
+# NOTE : only use feature_semgented mask
 def contrastive_1d_loss(features, objects, gamma=0.01, num_samples=2048):
     """
     input:
@@ -88,6 +88,8 @@ def contrastive_1d_loss(features, objects, gamma=0.01, num_samples=2048):
     sampled_features = features_flatten[sampled_indices]  # u  : shape must be (4096,3)
 
     for class_id in torch.unique(objects):  # obj id 0인경우 > class_objects에서 마스킹 됨
+        if class_id == -1.:
+            continue
         class_objects = objects == class_id  # 해당 클래스 마스크
         num_obj_pixel = torch.sum(class_objects)
         
@@ -108,6 +110,8 @@ def contrastive_1d_loss(features, objects, gamma=0.01, num_samples=2048):
             positive_loss = positive_similarities.sum()
             loss += positive_loss
 
+    if loss == 0.0:
+        raise ValueError("positive loss: zero value")
     # after adding all pos pair, we should take log scale
     loss = -torch.log(loss)
 
@@ -119,11 +123,13 @@ def contrastive_1d_loss(features, objects, gamma=0.01, num_samples=2048):
 
     torch.cuda.empty_cache()
 
-    return loss/num_samples
+    return loss
 
-#NOTE mask overlap 사용
-def contrastive_semantic_loss(ovl_features, seg_map, gamma=0.01, num_samples=2048):  # TODO object 별 grouping -> semantic 별 grouping 으로 변경
+# TODO
+def weighted_contrastive_loss(ovl_features, seg_map, ovl_cls, gamma=0.01, num_samples=2048):
     """
+    multi view contrastive loss which overlapped object get weighted loss
+
     input:
         - ovl_features(torch.Tensor) : object overlapped feature map, region not overlapped value 0(f_dim, h, w)
         - seg_map(torch.Tensor) : (h,w)
@@ -168,4 +174,3 @@ def contrastive_semantic_loss(ovl_features, seg_map, gamma=0.01, num_samples=204
             loss += negative_loss
 
     return loss/num_samples
-

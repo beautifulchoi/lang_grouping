@@ -13,7 +13,7 @@ sys.path.append("/home/lang-grouping")
 import os
 import torch
 from random import randint
-from utils.loss_utils import l1_loss, ssim, contrastive_1d_loss, contrastive_semantic_loss
+from utils.loss_utils import l1_loss, ssim, contrastive_1d_loss
 from gaussian_renderer import render, network_gui
 import sys
 from scene import Scene, GaussianModel
@@ -125,24 +125,21 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if iteration % 1000 == 0:
             gaussians.oneupSHdegree()
 
-
-
-        # # Pick a random Camera
+        # Pick a random Camera
         if not viewpoint_stack:
             viewpoint_stack = scene.getTrainCameras().copy()
-        viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
-            
-        # if not viewpoint_stack or len(viewpoint_stack) <2:
-        #     viewpoint_stack = scene.getTrainCameras().copy()
-        # rand_idx=randint(0, len(viewpoint_stack)-1)
-        # viewpoint_cam = viewpoint_stack.pop(rand_idx)
-        
-        # #multi view pick
-        # if opt.contrastive:
-        #     if rand_idx >= len(viewpoint_stack):
-        #         rand_idx-=1
-        #     viewpoint_cam_related = viewpoint_stack.pop(rand_idx) #위에서 하나 빠지므로 바로 앞 캠이 선택됨
+        rand_idx = randint(0, len(viewpoint_stack)-1)
+        viewpoint_cam = viewpoint_stack.pop(rand_idx)
 
+        if opt.contrastive.multi_view:
+            if rand_idx >= len(viewpoint_stack):
+                rand_idx -= 1
+            if not viewpoint_stack:
+                viewpoint_cam_related = viewpoint_cam
+            else:
+                viewpoint_cam_related = viewpoint_stack[rand_idx]  # near view selected
+
+        
         # Render
         if (iteration - 1) == debug_from:
             pipe.debug = True
@@ -150,6 +147,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         image, language_feature, viewspace_point_tensor, visibility_filter, radii, objects =\
                 render_pkg["render"], render_pkg["language_feature_image"], render_pkg["viewspace_points"], \
                 render_pkg["visibility_filter"], render_pkg["radii"], render_pkg["render_object"]
+        
         # Loss
         contrast_loss = None
         if opt.include_lang_feature:
@@ -162,40 +160,56 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if opt.contrastive and iteration % opt.contrastive.interval == 0:
                 gt_mask = (seg_map * language_feature_mask).squeeze(0)
                 gt_mask = gt_mask.to(torch.uint8)
-                #gt_objects = viewpoint_cam.objects #uint8
-                contrast_loss = contrastive_1d_loss(language_feature.permute(1,2,0), gt_mask, num_samples=1024)
-                
-                loss += contrast_loss
-                log.info(f"feature - contrastive loss: {contrast_loss}")
 
-                #multi view contrast 
-                # gt_language_feature_related, language_feature_mask_related, seg_map_related = viewpoint_cam_related.get_language_feature(language_feature_dir=dataset.lf_path,
-                #                                                                                                                             feature_level=dataset.feature_level,
-                #                                                                                                                             need_segmap =True)
-                # gt_objects = viewpoint_cam.objects
-                # gt_objects_related  = viewpoint_cam_related.objects
-                # obj_mask, obj_mask_related , ovl_cls = find_overlap_cls(gt_objects, gt_objects_related)
-                
-                # render_pkg_related = render(viewpoint_cam_related, gaussians, pipe, background, opt)
-                # language_feature_related = render_pkg_related["language_feature_image"]
-                # ovl_lang_feature=language_feature*obj_mask
-                # ovl_lang_feature_related = language_feature_related*obj_mask_related
-                # gt_mask_related =  (seg_map_related * language_feature_mask_related).squeeze(0)
-                # gt_mask_related = gt_mask_related.to(torch.uint8)
+                # multi-view contrastive loss
+                if opt.contrastive.multi_view:
+                    gt_objects = viewpoint_cam.objects
+                    gt_language_feature_related, language_feature_mask_related, seg_map_related = \
+                        viewpoint_cam_related.get_language_feature(language_feature_dir=dataset.lf_path,
+                                                                    feature_level=dataset.feature_level,
+                                                                    need_segmap =True)
+                    gt_objects = viewpoint_cam.objects
+                    gt_objects_related = viewpoint_cam_related.objects
+                    obj_mask, obj_mask_related , ovl_cls = find_overlap_cls(gt_objects, gt_objects_related)
+                    if len(ovl_cls) <= 1:
+                        print(f"ovl_cls num: {len(ovl_cls)}")
+                        continue
+                    render_pkg_related = render(viewpoint_cam_related, gaussians, pipe, background, opt)
+                    language_feature_related = render_pkg_related["language_feature_image"]
+                    ovl_lang_feature = language_feature*obj_mask
+                    ovl_lang_feature_related = language_feature_related*obj_mask_related
+                    gt_mask_related = (seg_map_related * language_feature_mask_related).squeeze(0)
+                    gt_mask_related = gt_mask_related.to(torch.uint8)
 
-                # _contrast_loss = contrastive_semantic_loss(ovl_lang_feature.permute(1,2,0), gt_mask) # lang feature: 3 728 986 // obj_mask : 728 986
-                # _contrast_loss_related = contrastive_semantic_loss(ovl_lang_feature_related.permute(1,2,0), gt_mask_related)
-                # contrast_loss = 0.5* (_contrast_loss + 0.5 * _contrast_loss_related)
-                # loss += contrast_loss # 
-                # log.info(f"feature - contrastive loss: {contrast_loss}")
-            
+                    _contrast_loss = contrastive_1d_loss(ovl_lang_feature.permute(1,2,0), gt_mask, num_samples=1024) # lang feature: 3 728 986 // obj_mask : 728 986
+                    _contrast_loss_related = contrastive_1d_loss(ovl_lang_feature_related.permute(1,2,0), gt_mask_related, num_samples=1024)
+                    obj_scale = obj_mask != 0.
+                    obj_scale = obj_scale.sum()
+                    obj_scale_related = obj_mask_related != 0.
+                    obj_scale_related = obj_scale_related.sum()
+                    
+                    scale_weight = obj_scale/(obj_scale + obj_scale_related)
+                    scale_weight_related = obj_scale_related/(obj_scale + obj_scale_related)
+
+                    contrast_loss = (scale_weight * _contrast_loss) + (scale_weight_related * _contrast_loss_related)
+                    if torch.isnan(contrast_loss):
+                        print()
+                    loss += contrast_loss
+                    # TODO per object scale awareable weight needed
+                    log.info(f"feature - contrastive loss: {contrast_loss}, weight : {scale_weight}, weight_related : {scale_weight_related}")
+                
+                # 1 view contrastive loss for all semantics
+                else:
+                    contrast_loss = contrastive_1d_loss(language_feature.permute(1,2,0), gt_mask, num_samples=1024)
+                    loss += contrast_loss
+                    log.info(f"feature - contrastive loss: {contrast_loss}")
 
         else:
             gt_image = viewpoint_cam.original_image.cuda()
             Ll1 = l1_loss(image, gt_image)            
             loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
             log.info(f"photometric loss: {loss}")
-            #obj loss
+            # obj loss
             # gt_obj = viewpoint_cam.objects.cuda().long()
             # logits = classifier(objects)
             # _obj_loss = cls_criterion(logits.unsqueeze(0), gt_obj.unsqueeze(0)).squeeze().mean()
@@ -203,7 +217,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             # loss += _obj_loss
             # log.info(f"object loss: {_obj_loss}")
         
-        loss.backward() 
+        loss.backward()
         iter_end.record()
         with torch.no_grad():
             # Progress bar

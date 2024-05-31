@@ -135,10 +135,11 @@ def safe_state(silent):
 
 def find_overlap_cls(obj1: torch.Tensor, obj2: torch.Tensor):
     """
-    find overlapped class between two masks
+    find overlapped class between two masks.
+    note that objs' should have consistent index of each object
     
     param:
-      obj1,2: GT class segmentation map
+      obj1,2: GT class object segmentation map
      
     return:
       obj_mask1,2: overlapped class mask map
@@ -148,37 +149,10 @@ def find_overlap_cls(obj1: torch.Tensor, obj2: torch.Tensor):
     cls2 = torch.unique(obj2)
     combined = torch.cat((cls1, cls2))
     uniques, counts = combined.unique(return_counts=True)
-    difference = uniques[counts == 1]
-    overlapped_cls= uniques[counts > 1]
+    overlapped_cls = uniques[counts > 1]
 
-    #masking
-    obj_mask1 = torch.where(torch.isin(obj1, overlapped_cls), obj1, torch.tensor(0))
-    obj_mask2 = torch.where(torch.isin(obj1, overlapped_cls), obj1, torch.tensor(0))
+    # masking
+    obj_mask1 = torch.where(torch.isin(obj1, overlapped_cls), obj1, 0.)
+    obj_mask2 = torch.where(torch.isin(obj2, overlapped_cls), obj2, 0.)
     
     return obj_mask1, obj_mask2, overlapped_cls
-
-# this code is not used because it have to copy to cpu which makes computation slow
-# def find_overlap_cls(obj1: torch.Tensor, obj2: torch.Tensor):
-#     """
-#     find overlapped class between two masks
-    
-#     param:
-#       obj1,2: GT class segmentation map
-     
-#     return:
-#       obj_mask1,2: overlapped class mask map
-#       overlapped_cls: overlapped class idx
-#     """
-
-#     cls1 = torch.unique(obj1)
-#     cls2 = torch.unique(obj2)
-
-#     overlapped_cls = torch.from_numpy(np.intersect1d(cls1, cls2))
-    
-#     #masking
-#     obj_mask1 = torch.where(torch.isin(obj1, overlapped_cls), obj1, torch.tensor(0))
-#     obj_mask2 = torch.where(torch.isin(obj1, overlapped_cls), obj1, torch.tensor(0))
-
-#     return obj_mask1, obj_mask2, overlapped_cls
-
-

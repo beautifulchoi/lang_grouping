@@ -2,7 +2,7 @@
 dataset:
   sh_degree : 3
   source_path : "/home/gaussian-grouping/data/lerf_mask/figurines" #dataset path
-  model_path : "/home/lang-grouping/output/lerf_mask/figurines_1view_contrastive" #output path
+  model_path : "/home/lang-grouping/output/lerf_mask/figurines_2view_contrastive" #output path
   language_features_name : "language_features_dim3" # compressed lang feature name
   images : "images"
   resolution : -1
@@ -50,7 +50,7 @@ opt:
     interval : 2
     k : 5
     lambda_val : 2
-
+    multi_view : True
 #User loccally option
 ip : 127.0.0.1
 port: 6012
