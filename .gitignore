@@ -18,3 +18,5 @@ compare*
 __pycache__
 eval_result*
 *.ipynb
+*.yaml
+wandb

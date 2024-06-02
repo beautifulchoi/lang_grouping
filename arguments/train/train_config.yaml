@@ -1,8 +1,8 @@
 # Model param
 dataset:
   sh_degree : 3
-  source_path : "/home/gaussian-grouping/data/lerf_mask/figurines" #dataset path
-  model_path : "/home/gaussian-grouping/lang-grouping/output/lerf_mask/figurines_2view_contrastive" #output path
+  source_path : "/home/splat/lang-grouping/lang-grouping/data/lerf_mask/figurines" #dataset path
+  model_path : "/home/splat/lang-grouping/lang-grouping/output/lerf_mask/figurines_2view_contrastive_ver2" #output path
   language_features_name : "language_features_dim3" # compressed lang feature name
   images : "images"
   resolution : -1
@@ -47,7 +47,7 @@ opt:
   
   #contrastive learning param
   contrastive:
-    interval : 2
+    interval : 100
     k : 5
     lambda_val : 2
     multi_view : True
@@ -67,6 +67,6 @@ start_checkpoint : 30000 # 30000 when language distil
 # No need to change
 hydra:
   run: # singlue run mode. multi run 하고 싶으면 sweep키워드 사용
-    dir: ${dataset.model_path}_1 # output directory 
+    dir: .
   output_subdir: ~
 #output subdir : .hydra 폴더의 이름을 바꿀 수 있음 ~는 안만들겠다는 뜻

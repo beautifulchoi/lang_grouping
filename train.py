@@ -8,8 +8,7 @@
 #
 # For inquiries contact  george.drettakis@inria.fr
 #
-import sys
-sys.path.append("/home/lang-grouping")
+
 import os
 import torch
 from random import randint
@@ -33,13 +32,6 @@ import logging
 import hydra
 
 import wandb
-
-# try:
-#     from torch.utils.tensorboard import SummaryWriter
-#     TENSORBOARD_FOUND = True
-# except ImportError:
-#     TENSORBOARD_FOUND = False
-
     
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
@@ -70,7 +62,7 @@ def run(cfg: DictConfig) -> None:
 
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, use_wandb = False):
     first_iter = 0
-    tb_writer = prepare_output_and_logger(dataset)
+    prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree)
     scene = Scene(dataset, gaussians)
     gaussians.training_setup(opt)
@@ -154,7 +146,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             gt_language_feature, language_feature_mask, seg_map = viewpoint_cam.get_language_feature(language_feature_dir=dataset.lf_path, 
                                                                                                      feature_level=dataset.feature_level,
                                                                                                      need_segmap=True)
-            Ll1 = l1_loss(language_feature*language_feature_mask, gt_language_feature*language_feature_mask)            
+            Ll1 = l1_loss(language_feature*language_feature_mask, gt_language_feature*language_feature_mask) # TODO: gt_lang_feaure 8 channel bug           
             loss = Ll1
             log.info(f"feature - L1 loss: {Ll1}")
             if opt.contrastive and iteration % opt.contrastive.interval == 0:
@@ -181,7 +173,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     gt_mask_related = (seg_map_related * language_feature_mask_related).squeeze(0)
                     gt_mask_related = gt_mask_related.to(torch.uint8)
 
-                    _contrast_loss = contrastive_1d_loss(ovl_lang_feature.permute(1,2,0), gt_mask, num_samples=1024) # lang feature: 3 728 986 // obj_mask : 728 986
+                    #_contrast_loss = contrastive_1d_loss(ovl_lang_feature.permute(1,2,0), gt_mask, num_samples=1024) # lang feature: 3 728 986 // obj_mask : 728 986
+                    #_contrast_loss_related = contrastive_1d_loss(ovl_lang_feature_related.permute(1,2,0), gt_mask_related, num_samples=1024)
+
+                    _contrast_loss = contrastive_1d_loss(language_feature.permute(1,2,0), gt_mask, num_samples=1024) 
                     _contrast_loss_related = contrastive_1d_loss(ovl_lang_feature_related.permute(1,2,0), gt_mask_related, num_samples=1024)
                     obj_scale = obj_mask != 0.
                     obj_scale = obj_scale.sum()
@@ -323,33 +318,5 @@ def training_report(use_wandb, iteration, Ll1, loss, l1_loss,
         torch.cuda.empty_cache()
 
 if __name__ == "__main__":
-    # Set up command line argument parser
-    # parser = ArgumentParser(description="Training script parameters")
-    # lp = ModelParams(parser)
-    # op = OptimizationParams(parser)
-    # pp = PipelineParams(parser)
-    # parser.add_argument('--ip', type=str, default="127.0.0.1")
-    # parser.add_argument('--port', type=int, default=55555)
-    # parser.add_argument('--debug_from', type=int, default=-1)
-    # parser.add_argument('--detect_anomaly', action='store_true', default=False)
-    # parser.add_argument("--test_iterations", nargs="+", type=int, default=[7_000, 30_000])
-    # parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000, 30_000])
-    # parser.add_argument("--quiet", action="store_true")
-    # parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[7_000, 30_000])
-    # parser.add_argument("--start_checkpoint", type=str, default = None)
-    # args = parser.parse_args(sys.argv[1:])
-    # args.save_iterations.append(args.iterations)
-    # print(args)
-    #args.model_path = args.model_path + f"_{str(args.feature_level)}"
-    #print("Optimizing " + args.model_path)
-
-    # Initialize system state (RNG)
-    #safe_state(args.quiet)
-
-    # Start GUI server, configure and run training
-    #network_gui.init(args.ip, args.port)
-    #torch.autograd.set_detect_anomaly(args.detect_anomaly)
-    #training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from)
     run()
-    # All done
     print("\nTraining complete.")

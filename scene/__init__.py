@@ -27,6 +27,7 @@ class Scene:
         """b
         :param path: Path to colmap scene main folder.
         """
+
         self.model_path = args.model_path
         self.loaded_iter = None
         self.gaussians = gaussians
@@ -47,8 +48,8 @@ class Scene:
             print("Found transforms_train.json file, assuming Blender data set!")
             scene_info = sceneLoadTypeCallbacks["Blender"](args.source_path, args.white_background, args.eval)
         else:
-            print(args.source_path)
-            assert False, "Could not recognize scene type!"
+            #print(args.source_path)
+            assert False, f"Could not recognize scene type!, {args.source_path}, current path :{os.getcwd()}"
 
         if not self.loaded_iter:
             with open(scene_info.ply_path, 'rb') as src_file, open(os.path.join(self.model_path, "input.ply") , 'wb') as dest_file:
