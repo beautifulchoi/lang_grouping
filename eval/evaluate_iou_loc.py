@@ -17,7 +17,7 @@ import time
 from tqdm import tqdm
 
 import sys
-sys.path.append("/home/lang-grouping")
+sys.path.append("/home/gaussian-grouping/lang-grouping")
 import colormaps
 from autoencoder.model import Autoencoder
 from openclip_encoder import OpenCLIPNetwork
