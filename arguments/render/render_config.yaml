@@ -2,7 +2,7 @@
 dataset:
   sh_degree : 3
   source_path : "/home/splat/lang-grouping/lang-grouping/data/lerf_mask/figurines" #dataset path
-  model_path : "/home/splat/lang-grouping/lang-grouping/output/lerf_mask/figurines_1view_contrastive_withdense" #output path
+  model_path : "/home/splat/lang-grouping/lang-grouping/output/lerf_mask/figurines_2view_contrastive_ver2" #output path
   language_features_name : "language_features_dim3" 
   images : "images"
   resolution : -1

@@ -112,7 +112,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         iter_start.record()
 
         gaussians.update_learning_rate(iteration)
-
+        
         # Every 1000 its we increase the levels of SH up to a maximum degree
         if iteration % 1000 == 0:
             gaussians.oneupSHdegree()
@@ -146,7 +146,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             gt_language_feature, language_feature_mask, seg_map = viewpoint_cam.get_language_feature(language_feature_dir=dataset.lf_path, 
                                                                                                      feature_level=dataset.feature_level,
                                                                                                      need_segmap=True)
-            Ll1 = l1_loss(language_feature*language_feature_mask, gt_language_feature*language_feature_mask) # TODO: gt_lang_feaure 8 channel bug           
+            Ll1 = l1_loss(language_feature*language_feature_mask, gt_language_feature*language_feature_mask)           
             loss = Ll1
             log.info(f"feature - L1 loss: {Ll1}")
             if opt.contrastive and iteration % opt.contrastive.interval == 0:
@@ -175,7 +175,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
                     #_contrast_loss = contrastive_1d_loss(ovl_lang_feature.permute(1,2,0), gt_mask, num_samples=1024) # lang feature: 3 728 986 // obj_mask : 728 986
                     #_contrast_loss_related = contrastive_1d_loss(ovl_lang_feature_related.permute(1,2,0), gt_mask_related, num_samples=1024)
-
+                    
                     _contrast_loss = contrastive_1d_loss(language_feature.permute(1,2,0), gt_mask, num_samples=1024) 
                     _contrast_loss_related = contrastive_1d_loss(ovl_lang_feature_related.permute(1,2,0), gt_mask_related, num_samples=1024)
                     obj_scale = obj_mask != 0.
@@ -273,6 +273,7 @@ def prepare_output_and_logger(dataset):    #
     dataset_yaml = OmegaConf.to_yaml(dataset)
     with open(os.path.join(dataset.model_path, "cfg_args.yaml"), 'w') as cfg_log_f:
         cfg_log_f.write(dataset_yaml)
+
 
 # use wanb for report
 def training_report(use_wandb, iteration, Ll1, loss, l1_loss, 
