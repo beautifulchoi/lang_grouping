@@ -2,7 +2,6 @@ import numpy as np
 import torch
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
-import mediapy as media
 import cv2
 import colormaps
 from pathlib import Path
@@ -68,7 +67,8 @@ def colormap_saving(image: torch.Tensor, colormap_options, save_path):
         ).cpu().numpy()
     )
     if save_path is not None:
-        media.write_image(save_path.with_suffix(".png"), output_image, fmt="png")
+        cv2.imwrite(f"{save_path}.png", output_image)
+        # media.write_image(save_path.with_suffix(".png"), output_image, fmt="png")
     return output_image
 
 

@@ -22,13 +22,13 @@ from arguments import ModelParams, PipelineParams, get_combined_args
 from gaussian_renderer import GaussianModel
 import hydra
 from omegaconf import OmegaConf, DictConfig
-from pytorch_lightning import seed_everything
+# from pytorch_lightning import seed_everything
 
 @hydra.main(config_path="arguments/render", config_name="render_config.yaml")
 def run(cfg: DictConfig):
     #log.info(OmegaConf.to_yaml(cfg))
     print("Rendering " + cfg.dataset.model_path)
-    seed_everything(0)
+    # seed_everything(0)
     if cfg.dataset.feature_level:
         cfg.dataset.model_path = cfg.dataset.model_path + f"_{str(cfg.dataset.feature_level)}"
         cfg.dataset.lf_path = os.path.join(os.path.join(cfg.dataset.source_path, cfg.dataset.language_features_name))

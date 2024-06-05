@@ -82,10 +82,10 @@ if __name__ == '__main__':
             optimizer.step()
 
             global_iter = epoch * len(train_loader) + idx
-            tb_writer.add_scalar('train_loss/l2_loss', l2loss.item(), global_iter)
-            tb_writer.add_scalar('train_loss/cos_loss', cosloss.item(), global_iter)
-            tb_writer.add_scalar('train_loss/total_loss', loss.item(), global_iter)
-            tb_writer.add_histogram("feat", outputs, global_iter)
+            # tb_writer.add_scalar('train_loss/l2_loss', l2loss.item(), global_iter)
+            # tb_writer.add_scalar('train_loss/cos_loss', cosloss.item(), global_iter)
+            # tb_writer.add_scalar('train_loss/total_loss', loss.item(), global_iter)
+            # tb_writer.add_histogram("feat", outputs, global_iter)
 
         if epoch > 95:
             eval_loss = 0.0

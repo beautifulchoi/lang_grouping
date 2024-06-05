@@ -2,7 +2,7 @@
 # Copyright (C) 2023, Inria
 # GRAPHDECO research group, https://team.inria.fr/graphdeco
 # All rights reserved.
-#
+#       
 # This software is free for non-commercial, research and evaluation use 
 # under the terms of the LICENSE.md file.
 #
@@ -21,11 +21,9 @@ from utils.general_utils import safe_state, find_overlap_cls
 import uuid
 from tqdm import tqdm
 from utils.image_utils import psnr
-from argparse import ArgumentParser, Namespace
-from arguments import ModelParams, PipelineParams, OptimizationParams
 
 #set seed automatically
-from pytorch_lightning import seed_everything
+# from pytorch_lightning import seed_everything
 
 #configuration setter
 from omegaconf import DictConfig, OmegaConf
@@ -50,7 +48,7 @@ def run(cfg: DictConfig) -> None:
     log.info(OmegaConf.to_yaml(cfg))
     network_gui.init(cfg.ip, cfg.port)
     torch.autograd.set_detect_anomaly(cfg.detect_anomaly)
-    seed_everything(0)
+    # seed_everything(0)
 
     if cfg.start_checkpoint:
         cfg.start_checkpoint = os.path.join(cfg.dataset.model_path, f"chkpnt{cfg.start_checkpoint}.pth")
@@ -131,13 +129,13 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         rand_idx = randint(0, len(viewpoint_stack)-1)
         viewpoint_cam = viewpoint_stack.pop(rand_idx)
 
-        if opt.contrastive.multi_view:
-            if rand_idx >= len(viewpoint_stack):
-                rand_idx -= 1
-            if not viewpoint_stack:
-                viewpoint_cam_related = viewpoint_cam
-            else:
-                viewpoint_cam_related = viewpoint_stack[rand_idx]  # near view selected
+        # if opt.contrastive.multi_view:
+        #     if rand_idx >= len(viewpoint_stack):
+        #         rand_idx -= 1
+        #     if not viewpoint_stack:
+        #         viewpoint_cam_related = viewpoint_cam
+        #     else:
+        #         viewpoint_cam_related = viewpoint_stack[rand_idx]  # near view selected
 
         
         # Render
