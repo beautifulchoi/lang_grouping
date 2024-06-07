@@ -21,7 +21,7 @@ sys.path.append("../")
 import colormaps
 from autoencoder.model import Autoencoder
 from openclip_encoder import OpenCLIPNetwork
-from utils import smooth, colormap_saving, vis_mask_save, polygon_to_mask, stack_mask, show_result
+from utilities import smooth, colormap_saving, vis_mask_save, polygon_to_mask, stack_mask, show_result
 
 import hydra
 from omegaconf import DictConfig, OmegaConf
@@ -198,8 +198,8 @@ def lerf_localization(sem_map, image, clip_model, image_name, img_ann):
         # NOTE Find the maximum point in the smoothed activation value plot
         scale = 30
         kernel = np.ones((scale,scale)) / (scale**2)
-        np_relev = select_output.cpu().numpy()
-        avg_filtered = cv2.filter2D(np_relev.transpose(1,2,0), -1, kernel)
+        np_relev = select_output.cpu().numpy() # 3(level), h, w
+        avg_filtered = cv2.filter2D(np_relev.transpose(1,2,0), -1, kernel) # h, w ,3
         
         score_lvl = np.zeros((n_head,))
         coord_lvl = []

@@ -12,15 +12,15 @@
 import os
 import torch
 from random import randint
-from utils.loss_utils import l1_loss, ssim, contrastive_1d_loss, slowfast_contrastive_1d_loss
-from gaussian_renderer import render, network_gui
-import sys
+from utils.loss_utils import l1_loss, l2_loss, cos_loss, ssim, contrastive_1d_loss, slowfast_contrastive_1d_loss
+from gaussian_renderer import render
 from scene import Scene, GaussianModel
-from utils.general_utils import safe_state, find_overlap_cls
+from utils.general_utils import find_overlap_cls
 import uuid
 from tqdm import tqdm
 from utils.image_utils import psnr
 from copy import deepcopy
+from feature_mapper import MapperMLP
 
 #set seed automatically
 from pytorch_lightning import seed_everything
@@ -31,15 +31,14 @@ import logging
 import hydra
 
 import wandb
-    
+
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
 
 
-@hydra.main(config_path="arguments/train", config_name="train_config")
+@hydra.main(config_path="arguments/train", config_name="train_grouping_config")
 def run(cfg: DictConfig) -> None:
     log.info(OmegaConf.to_yaml(cfg))
-    network_gui.init(cfg.ip, cfg.port)
     torch.autograd.set_detect_anomaly(cfg.detect_anomaly)
     seed_everything(0)
 
@@ -48,7 +47,7 @@ def run(cfg: DictConfig) -> None:
 
     if cfg.dataset.feature_level and cfg.opt.include_lang_feature:
         cfg.dataset.model_path = cfg.dataset.model_path + f"_{str(cfg.dataset.feature_level)}"
-        cfg.dataset.lf_path = os.path.join(os.path.join(cfg.dataset.source_path, cfg.dataset.language_features_name))
+    cfg.dataset.lf_path = os.path.join(os.path.join(cfg.dataset.source_path, cfg.dataset.language_features_name))
     
     if cfg.use_wandb:
         wandb.init(project="gaussian-splatting")
@@ -65,6 +64,17 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     gaussians = GaussianModel(dataset.sh_degree)
     scene = Scene(dataset, gaussians)
     gaussians.training_setup(opt)
+
+    num_classes = dataset.num_classes
+    print("Num classes: ",num_classes)
+    classifier = torch.nn.Conv2d(gaussians.num_objects, num_classes, kernel_size=1)
+    cls_criterion = torch.nn.CrossEntropyLoss(reduction='none')
+    cls_optimizer = torch.optim.Adam(classifier.parameters(), lr=opt.object_lr)
+    classifier.cuda()
+
+    clip_mapper = torch.nn.Conv2d(gaussians.num_objects, 512, kernel_size=1) #MapperMLP(gaussians.num_objects, 512)  #TODO OOM issue
+    mapper_optimizer = torch.optim.Adam(clip_mapper.parameters(), lr=opt.mapper_lr)
+    clip_mapper.cuda()
 
     if opt.include_lang_feature:
         if not checkpoint:
@@ -89,21 +99,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     gaussians_slow = None
     
     for iteration in range(first_iter, opt.iterations + 1):        
-        if network_gui.conn == None:
-            network_gui.try_connect()
-        while network_gui.conn != None:
-            try:
-                net_image_bytes = None
-                custom_cam, do_training, pipe.convert_SHs_python, pipe.compute_cov3D_python, keep_alive, scaling_modifer = network_gui.receive()
-                if custom_cam != None:
-                    net_image = render(custom_cam, gaussians, pipe, background, opt, scaling_modifer)["render"]
-                    net_image_bytes = memoryview((torch.clamp(net_image, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().cpu().numpy())
-                network_gui.send(net_image_bytes, dataset.source_path)
-                if do_training and ((iteration < int(opt.iterations)) or not keep_alive):
-                    break
-            except Exception as e:
-                network_gui.conn = None
-
         iter_start.record()
 
         gaussians.update_learning_rate(iteration)
@@ -118,7 +113,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         rand_idx = randint(0, len(viewpoint_stack)-1)
         viewpoint_cam = viewpoint_stack.pop(rand_idx)
 
-        if opt.contrastive.multi_view:
+        if opt.multi_view:
             if rand_idx >= len(viewpoint_stack):
                 rand_idx -= 1
             if not viewpoint_stack:
@@ -126,14 +121,15 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             else:
                 viewpoint_cam_related = viewpoint_stack[rand_idx]  # near view selected
 
-        #slow_fast initialization
-        if opt.contrastive.slow_fast:
-            if iteration == opt.contrastive.slow_fast.start_iter:
-                gaussians_slow = deepcopy(gaussians)
-                with torch.no_grad():
-                    for param in gaussians_slow.capture(True):
-                        if isinstance(param, torch.Tensor):
-                            param.requires_grad = False
+        # slow_fast initialization
+        if opt.contrastive:
+            if opt.contrastive.slow_fast:
+                if iteration == opt.contrastive.slow_fast.start_iter:
+                    gaussians_slow = deepcopy(gaussians)
+                    with torch.no_grad():
+                        for param in gaussians_slow.capture(True):
+                            if isinstance(param, torch.Tensor):
+                                param.requires_grad = False
         # Render
         if (iteration - 1) == debug_from:
             pipe.debug = True
@@ -144,6 +140,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         
         # Loss
         contrast_loss = None
+        instance_loss = None
+        mapping_loss = None
+        # lang splat train pipeline
         if opt.include_lang_feature:
             gt_language_feature, language_feature_mask, seg_map = viewpoint_cam.get_language_feature(language_feature_dir=dataset.lf_path, 
                                                                                                      feature_level=dataset.feature_level,
@@ -156,7 +155,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 gt_mask = gt_mask.to(torch.uint8)
 
                 # multi-view contrastive loss
-                if opt.contrastive.multi_view:
+                if opt.multi_view:
                     gt_objects = viewpoint_cam.objects
                     gt_language_feature_related, language_feature_mask_related, seg_map_related = \
                         viewpoint_cam_related.get_language_feature(language_feature_dir=dataset.lf_path,
@@ -197,32 +196,48 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 
                 # do slow fast implementation 
                 elif opt.contrastive.slow_fast and gaussians_slow:
-                    #slow 도 device에 함께 올라가 있어야함
                     render_pkg_slow = render(viewpoint_cam, gaussians_slow, pipe, background, opt)
-                    language_feature_slow = render_pkg_slow["language_feature_image"]  #여기까지는 gt_mask가 살아있다가 함수에 들어가면 갑자기 값이 안보여
+                    language_feature_slow = render_pkg_slow["language_feature_image"]  
                     language_feature_slow = language_feature_slow.to(language_feature)
-                    contrast_loss = slowfast_contrastive_1d_loss(language_feature.permute(1,2,0), language_feature_slow.permute(1,2,0), gt_mask, num_samples = 1024) #TODO error debuginng
+                    contrast_loss = slowfast_contrastive_1d_loss(language_feature.permute(1,2,0), language_feature_slow.permute(1,2,0), gt_mask, num_samples = 1024) 
                     loss += contrast_loss
                     log.info(f"feature - slowfast contrastive loss: {contrast_loss}")
+
                 # 1 view contrastive loss for all semantics
                 else: 
                     contrast_loss = contrastive_1d_loss(language_feature.permute(1,2,0), gt_mask, num_samples=1024)
                     loss += contrast_loss
                     log.info(f"feature - contrastive loss: {contrast_loss}")
 
-        else:
+        else:            
             gt_image = viewpoint_cam.original_image.cuda()
             Ll1 = l1_loss(image, gt_image)            
             loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
             log.info(f"photometric loss: {loss}")
-            # obj loss
-            # gt_obj = viewpoint_cam.objects.cuda().long()
-            # logits = classifier(objects)
-            # _obj_loss = cls_criterion(logits.unsqueeze(0), gt_obj.unsqueeze(0)).squeeze().mean()
-            # _obj_loss = _obj_loss / torch.log(torch.tensor(num_classes))  # normalize to (0,1)
-            # loss += _obj_loss
-            # log.info(f"object loss: {_obj_loss}")
-        
+            
+            # gaussian grouping pipeline
+            if opt.include_instance_feature:
+                gt_obj = viewpoint_cam.objects.cuda().long()
+                logits = classifier(objects)
+                instance_loss = cls_criterion(logits.unsqueeze(0), gt_obj.unsqueeze(0)).squeeze().mean()
+                instance_loss = instance_loss / torch.log(torch.tensor(num_classes))  # normalize to (0,1)
+                loss += instance_loss
+                log.info(f"object loss: {instance_loss}")
+                #TODO add 3d grouping loss after optimizing well. now, too much memory consumption causes OOM
+                
+                # instance -> CLIP mapping
+                if opt.include_mapping:
+                    if iteration >= opt.include_mapping.start_iter:
+                        gt_language_feature, language_feature_mask = viewpoint_cam.get_language_feature(language_feature_dir=dataset.lf_path, 
+                                                                                                        feature_level=dataset.feature_level)
+                        mapped_output = clip_mapper(objects) #512, h, w
+                        l2loss = l1_loss(mapped_output * language_feature_mask, gt_language_feature*language_feature_mask)
+                        cosloss = cos_loss(mapped_output * language_feature_mask, gt_language_feature*language_feature_mask)
+                        mapping_loss = l2loss + cosloss * 0.01
+                        
+                        loss += mapping_loss
+                        log.info(f"mapping los : {mapping_loss}// l2loss : {l2loss}, cos loss : {cosloss}")
+
         loss.backward()
         iter_end.record()
 
@@ -243,11 +258,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             training_report(use_wandb, iteration, 
                             Ll1, loss, l1_loss,
                             iter_start.elapsed_time(iter_end), testing_iterations, scene, 
-                            render, (pipe, background, opt), contrast_loss,
+                            render, (pipe, background, opt), 
+                            contrast_loss,instance_loss,mapping_loss
                             )
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
+                torch.save(classifier.state_dict(), os.path.join(scene.model_path, "point_cloud/iteration_{}".format(iteration),'classifier.pth'))
+                torch.save(clip_mapper.state_dict(), os.path.join(scene.model_path, "point_cloud/iteration_{}".format(iteration),'mapper.pth'))
             #log on local too
             log.info(f"iteration {iteration}/{opt.iterations+1}, total loss: {loss}")
             
@@ -269,13 +287,15 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if iteration < opt.iterations:
                 gaussians.optimizer.step()
                 gaussians.optimizer.zero_grad(set_to_none = True)
-                # cls_optimizer.step() # 
-                # cls_optimizer.zero_grad()
+                cls_optimizer.step() # 
+                cls_optimizer.zero_grad()
+                mapper_optimizer.step()
+                mapper_optimizer.zero_grad()
 
             if (iteration in checkpoint_iterations):
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
                 torch.save((gaussians.capture(opt.include_lang_feature), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
-            
+
 def prepare_output_and_logger(dataset):    # 
     if not dataset.model_path:
         if os.getenv('OAR_JOB_ID'):
@@ -295,16 +315,23 @@ def prepare_output_and_logger(dataset):    #
 # use wanb for report
 def training_report(use_wandb, iteration, Ll1, loss, l1_loss, 
                     elapsed, testing_iterations, scene : Scene, 
-                    renderFunc, renderArgs, loss_contrast= None):
+                    renderFunc, renderArgs, 
+                    loss_contrast=None, loss_instance=None, loss_mapping=None):
 
     if use_wandb:
+        log_dict = {
+            "train_loss_patches/l1_loss": Ll1.item(),
+            "train_loss_patches/total_loss": loss.item(),
+            "iter_time": elapsed,
+            "iter": iteration
+        }
         if loss_contrast:
-            wandb.log({"train_loss_patches/l1_loss": Ll1.item(), "train_loss_patches/total_loss": loss.item(), 
-                       "train_loss_patches/loss_contrastive": loss_contrast.item(), "iter_time": elapsed, "iter": iteration})
-        else:
-            wandb.log({"train_loss_patches/l1_loss": Ll1.item(), "train_loss_patches/total_loss": loss.item(), 
-                       "iter_time": elapsed, "iter": iteration})
-    
+            log_dict["train_loss_others/loss_contrastive"] = loss_contrast.item()
+        if loss_instance:
+            log_dict["train_loss_others/loss_instance"] = loss_instance.item()
+        if loss_mapping:
+            log_dict["train_loss_others/loss_mapping"] = loss_mapping.item()
+        wandb.log(log_dict)
     # Report test and samples of training set
     if iteration in testing_iterations:
         torch.cuda.empty_cache()

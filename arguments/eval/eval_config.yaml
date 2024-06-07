@@ -1,8 +1,8 @@
 #eval param
 dataset_name: "figurines"
-feat_dir: "/home/splat/lang-grouping/lang-grouping/output/lerf_mask/figurines_2view_contrastive_ver2"     
+feat_dir: "/home/splat/lang-grouping/lang-grouping/output/lerf_mask/figurines_1view_contrastive_sf"     
 ae_ckpt_dir: "/home/splat/lang-grouping/lang-grouping/autoencoder/ckpt/lerf_mask"
-output_dir: "/home/splat/lang-grouping/lang-grouping/eval_result/figurines_2view_contrastive_ver2"
+output_dir: "/home/splat/lang-grouping/lang-grouping/eval_result/figurines_1view_contrastive_sf"
 json_folder: "/home/splat/lang-grouping/lang-grouping/data/lerf_ovs/label"
 mask_thresh: 0.4
 

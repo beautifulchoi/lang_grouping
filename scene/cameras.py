@@ -63,7 +63,8 @@ class Camera(nn.Module):
         else:
             self.objects = None
 
-    def get_language_feature(self, language_feature_dir, feature_level, need_segmap = False):
+
+    def get_language_feature(self, language_feature_dir, feature_level, need_segmap=False):
         language_feature_name = os.path.join(language_feature_dir, self.image_name)
         seg_map = torch.from_numpy(np.load(language_feature_name + '_s.npy'))
         feature_map = torch.from_numpy(np.load(language_feature_name + '_f.npy'))
@@ -81,7 +82,7 @@ class Camera(nn.Module):
         seg = seg_map[:, y, x].squeeze(-1).long()
         mask = seg != -1
         if feature_level == 0: # default
-            point_feature1 = feature_map[seg[0:1]].squeeze(0)
+            point_feature1 = feature_map[seg[0:1]].squeeze(0) #이건 feature_map 과 seg의 인덱스가 동일하니까 되는거
             mask = mask[0:1].reshape(1, self.image_height, self.image_width)
         elif feature_level == 1: # s
             point_feature1 = feature_map[seg[1:2]].squeeze(0)
@@ -95,12 +96,13 @@ class Camera(nn.Module):
         else:
             raise ValueError("feature_level=", feature_level)
         # point_feature = torch.cat((point_feature2, point_feature3, point_feature4), dim=-1).to('cuda')
-        point_feature = point_feature1.reshape(self.image_height, self.image_width, -1).permute(2, 0, 1)
+        point_feature = point_feature1.reshape(self.image_height, self.image_width, -1).permute(2, 0, 1) # f_dim, h, w
         
         if need_segmap:
             return point_feature.cuda(), mask.cuda(), seg_map[feature_level].cuda()
         
-        return point_feature.cuda(), mask.cuda() 
+
+        return point_feature.cuda(), mask.cuda()
 
 class MiniCam:
     def __init__(self, width, height, fovy, fovx, znear, zfar, world_view_transform, full_proj_transform):

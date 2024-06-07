@@ -20,3 +20,5 @@ eval_result*
 *.ipynb
 *.yaml
 wandb
+*.png
+*.jpg

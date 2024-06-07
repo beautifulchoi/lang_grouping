@@ -22,6 +22,9 @@ def l1_loss(network_output, gt):
 def l2_loss(network_output, gt):
     return ((network_output - gt) ** 2).mean()
 
+def cos_loss(network_output, gt):
+    return 1 - F.cosine_similarity(network_output, gt, dim=0).mean()
+
 def gaussian(window_size, sigma):
     gauss = torch.Tensor([exp(-(x - window_size // 2) ** 2 / float(2 * sigma ** 2)) for x in range(window_size)])
     return gauss / gauss.sum()
@@ -189,7 +192,7 @@ def slowfast_contrastive_1d_loss(features_fast, features_slow, objects, gamma=0.
     loss += total_loss
 
     torch.cuda.empty_cache()
-    return loss  #divide ? 
+    return loss / (num_samples//2)  #divide ? 
 
 # #TODO : need to debug - pos 가 total 보다 영향이 커서 전체 loss가 음수가 되는 현상이 있음
 # def contrastive_1d_loss_vectorize(features, objects, gamma=0.01, num_samples=2048):
