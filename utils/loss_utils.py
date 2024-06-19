@@ -127,7 +127,7 @@ def contrastive_1d_loss(features, objects, gamma=0.01, num_samples=2048):
 
     torch.cuda.empty_cache()
 
-    return loss
+    return loss / num_samples
 
 def slowfast_contrastive_1d_loss(features_fast, features_slow, objects, gamma=0.01, num_samples=2048):
     """
@@ -186,7 +186,6 @@ def slowfast_contrastive_1d_loss(features_fast, features_slow, objects, gamma=0.
     # after adding all pos pair, we should take log scale
     loss = -torch.log(loss)
 
-##TODO error occured 
     similarities_total = _rbf_kernel(sampled_features_fast, sampled_features_slow, gamma=gamma)
     total_loss = torch.log(similarities_total.sum())
     loss += total_loss

@@ -20,6 +20,7 @@ dependencies:
   - typing
   - pathlib
   - hydra
+  - pytorch_lightning
   
   - pip:
     - submodules/segment-anything-langsplat

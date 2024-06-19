@@ -13,7 +13,6 @@ from tqdm import tqdm
 from os import makedirs
 from gaussian_renderer import render
 import torchvision
-from arguments import get_combined_args
 from gaussian_renderer import GaussianModel
 import numpy as np
 from PIL import Image
@@ -22,8 +21,8 @@ import cv2
 from sklearn.decomposition import PCA
 from pytorch_lightning import seed_everything
 import hydra
-from omegaconf import OmegaConf, DictConfig
-
+from omegaconf import DictConfig
+import yaml
 
 def feature_to_rgb(features):
     # Input features shape: (16, H, W)
@@ -157,6 +156,11 @@ def render_sets(dataset: dict, iteration : int, pipeline: dict, skip_train : boo
         classifier = torch.nn.Conv2d(gaussians.num_objects, num_classes, kernel_size=1)
         classifier.cuda()
         classifier.load_state_dict(torch.load(os.path.join(dataset.model_path,"point_cloud","iteration_"+str(scene.loaded_iter),"classifier.pth")))
+
+        # load gaussian
+        checkpoint = os.path.join(dataset.model_path, f'chkpnt{iteration}.pth')
+        (model_params, first_iter, check_include) = torch.load(checkpoint)
+        gaussians.restore(check_include, model_params, opt, mode='test')
 
         bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
         background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")

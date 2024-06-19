@@ -1,13 +1,13 @@
 # Model param
 dataset:
   sh_degree : 3
-  source_path : "/home/splat/lang-grouping/lang-grouping/data/lerf_mask/figurines" #dataset path
-  model_path : "/home/splat/lang-grouping/lang-grouping/output/lerf_mask/figurines_1view_contrastive_sf2" #output path
+  source_path : "/home/splat/lang-grouping/lang-grouping/data/lerf_mask/teatime" #dataset path
+  model_path : "/home/splat/lang-grouping/lang-grouping/output/lerf_mask/teatime" #output path
   language_features_name : "language_features_dim3" # compressed lang feature name
   images : "images"
   resolution : -1
   white_background : False
-  feature_level : 2 #
+  feature_level : 1 #
   data_device : "cuda"
   eval : False
   lf_path : ''
@@ -52,7 +52,7 @@ opt:
     k : 5
     lambda_val : 2
     multi_view : False
-    start_iter : 3000
+    start_iter : 2
     slow_fast : False
       #start_iter : 3000
 #User loccally option

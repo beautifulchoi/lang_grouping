@@ -81,7 +81,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         (model_params, first_iter) = torch.load(checkpoint)
         if len(model_params) == 13 and opt.include_lang_feature:
             first_iter = 0
-        gaussians.restore(model_params, opt)
+        gaussians.restore({'lang':False, 'object':True},model_params, opt) #임의로 넣었음
         
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
@@ -257,7 +257,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
             if (iteration in checkpoint_iterations):
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
-                torch.save((gaussians.capture(opt.include_lang_feature), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
+                torch.save((gaussians.capture(opt.include_lang_feature, opt.include_instance_feature), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
             
 def prepare_output_and_logger(dataset):    # 
     if not dataset.model_path:

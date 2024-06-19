@@ -48,6 +48,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         prefiltered=False,
         debug=pipe.debug,
         include_feature=opt.include_lang_feature,
+        include_instance=opt.include_instance_feature,
     )
 
     rasterizer = GaussianRasterizer(raster_settings=raster_settings)
@@ -70,7 +71,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     # If precomputed colors are provided, use them. Otherwise, if it is desired to precompute colors
     # from SHs in Python, do it. If not, then SH -> RGB conversion will be done by rasterizer.
     shs = None
-    sh_objs= None # 
+    #sh_objs= None # 
     colors_precomp = None
     if override_color is None:
         if pipe.convert_SHs_python:
@@ -81,20 +82,23 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             colors_precomp = torch.clamp_min(sh2rgb + 0.5, 0.0)
         else:
             shs = pc.get_features
-            sh_objs = pc.get_objects #
+            #sh_objs = pc.get_objects #
     else: 
         colors_precomp = override_color
 
     if opt.include_lang_feature:
         language_feature_precomp = pc.get_language_feature
         language_feature_precomp = language_feature_precomp/ (language_feature_precomp.norm(dim=-1, keepdim=True) + 1e-9)
-        # language_feature_precomp = torch.sigmoid(language_feature_precomp)
+
     else:
         language_feature_precomp = torch.zeros((1,), dtype=opacity.dtype, device=opacity.device)
-        
-    # Rasterize visible Gaussians to image, obtain their radii (on screen). 
-    # start_time = time.time()
 
+    if opt.include_instance_feature:
+        sh_objs = pc.get_objects
+    else:
+        sh_objs = torch.zeros((1,), dtype=opacity.dtype, device=opacity.device)
+
+    # Rasterize visible Gaussians to image, obtain their radii (on screen). 
     rendered_image, language_feature_image, radii, rendered_objects = rasterizer( #
         means3D = means3D,
         means2D = means2D,
@@ -107,11 +111,8 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         rotations = rotations,
         cov3D_precomp = cov3D_precomp)
     
-    # end_time = time.time()
-    # print('render_init_rasterizer程序运行时间为: %s Seconds'%(end_time-start_time))
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.
-    
     return {"render": rendered_image,
             "language_feature_image": language_feature_image,
             "viewspace_points": screenspace_points,

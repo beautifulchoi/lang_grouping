@@ -35,7 +35,7 @@ def run(cfg: DictConfig):
     
     render_sets(cfg.dataset, cfg.iteration, cfg.pipe, cfg.skip_train, cfg.skip_test, cfg.opt)
 
-#TODO : render set grouping에 맞게 변경
+
 def render_set(dataset, name, iteration, views, gaussians, pipeline, background, opt):
     render_path = os.path.join(dataset.model_path, name, "ours_{}".format(iteration), "renders")
     gts_path = os.path.join(dataset.model_path, name, "ours_{}".format(iteration), "gt")
@@ -84,7 +84,7 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
 
         checkpoint = os.path.join(dataset.model_path, f'chkpnt{iteration}.pth')
         (model_params, first_iter) = torch.load(checkpoint)
-        gaussians.restore(model_params, opt, mode='test')
+        gaussians.restore({'lang':True, 'object':True},model_params, opt, mode='test')
         
         bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
         background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
@@ -96,21 +96,4 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
              render_set(dataset, "test", scene.loaded_iter, scene.getTestCameras(), gaussians, pipeline, background, opt)
 
 if __name__ == "__main__":
-    # Set up command line argument parser
-    
-    # parser = ArgumentParser(description="Testing script parameters")
-    # model = ModelParams(parser, sentinel=True)
-    # pipeline = PipelineParams(parser)
-    # parser.add_argument("--iteration", default=-1, type=int)
-    # parser.add_argument("--skip_train", action="store_true")
-    # parser.add_argument("--skip_test", action="store_true")
-    # parser.add_argument("--quiet", action="store_true")
-    # parser.add_argument("--include_feature", action="store_true")
-
-    # args = get_combined_args(parser)
-    # print("Rendering " + args.model_path)
-
-    # safe_state(args.quiet)
-
-    # render_sets(model.extract(args), args.iteration, pipeline.extract(args), args.skip_train, args.skip_test, args)
     run()

@@ -27,9 +27,13 @@ def feature_visualize_saving(feature, seed):
 
 
 def get_feature_map(seg_dir, feature_dir, img_number):
-    seg_path = os.path.join(seg_dir, f'{img_number-1:0>5}'+ '.png')
+    seg_path = os.path.join(seg_dir, f'{int(img_number)-1:0>5}'+ '.png')
     feature_path = os.path.join(feature_dir, "frame_" + f'{img_number:0>5}' + '_f.npy')
     seg_map = np.array(Image.open(seg_path))
+    if not os.path.isfile(feature_path):
+        feature_rel1 = np.load(os.path.join(feature_dir, "frame_" + f'{img_number+1:0>5}' + '_f.npy'))
+        feature_rel2 = np.load(os.path.join(feature_dir, "frame_" + f'{img_number-1:0>5}' + '_f.npy'))
+        feature_map = average_feature(np.concatenate([[feature_rel1], [feature_rel2]], axis=0))
     feature_map = np.load(feature_path) #256, 512
     h, w = seg_map.shape
     y, x = torch.meshgrid(torch.arange(0, h), torch.arange(0, w))
@@ -42,23 +46,14 @@ def get_feature_map(seg_dir, feature_dir, img_number):
 
     return point_feature
 
-# test code
-if __name__ == '__main__':
-    seed_num = 42
-    seed_everything(seed_num)
-
-    seg_dir = '/home/splat/lang-grouping/lang-grouping/data/lerf_mask/figurines/object_mask/'
-    feature_dir = '/home/splat/lang-grouping/lang-grouping/data/lerf_mask/figurines/language_features_instance/'
-    save_path = '/home/splat/lang-grouping/lang-grouping/vis_instance_feature'
-
-    image_names = []
-    img_dir = '/home/splat/lang-grouping/lang-grouping/data/lerf_mask/figurines/images/'
-    for filename in os.listdir(img_dir):
-        _, file_extension = os.path.splitext(filename)
-        image_name = os.path.splitext(filename)[0]
-        image_names.append(image_name)
-
-    for name in image_names:
-        f_map = get_feature_map(seg_dir, feature_dir, name)
-        vis_f = feature_visualize_saving(f_map)
-        Image.fromarray((vis_f.cpu().numpy() * 255).astype(np.uint8)).save(os.path.join(save_path, name + "_feature_vis.png"))
+def average_feature(features): #(N, 256, 512)
+    #n, num_obj, f_dim = features.shape
+    avg_feature = np.sum(features, axis = 0)
+    non_zero_mask = ~np.all(features == 0, axis=(1, 2))
+    div_list = np.sum(non_zero_mask, axis=0)
+    div_list = div_list[None, :]
+    div_list = np.where(div_list!= 0, div_list, 10e-6)
+    avg_feature /= div_list
+    
+    return avg_feature
+        
