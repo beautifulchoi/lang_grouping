@@ -7,7 +7,7 @@
 ---
 
 This repository contains the implementation of **LangGrouping**, a 3D vision project exploring language-guided Gaussian-based segmentation and grouping for multi-view scenes.  
-The project extends the idea of **language-conditioned feature learning** in 3D Gaussian Splatting to perform semantic grouping without explicit supervision.
+The project extends the idea of **language-conditioned feature learning** in 3D Gaussian Splatting to perform semantic grouping with faster inference than LangSplat.
 
 ---
 
