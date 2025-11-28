@@ -1,5 +1,9 @@
 # Lang-Grouping: Object-centric semantic grouping for better understanding 3D scenes
-[Yongjun Choi](https://beautifulchoi.github.io/), [Seungoh Han](#), [Junhee Lee](#)  
+<sub>
+<b>Yongjun Choi</b>, <b>Seungoh Han</b>, <b>Junhee Lee</b><br>
+3D Vision Final Project, UNIST, 2025  
+</sub>
+
 *(3D Vision Final Project, UNIST, 2024)*  
 ---
 
