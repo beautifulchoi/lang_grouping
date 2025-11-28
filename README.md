@@ -4,6 +4,10 @@
 </sub>
 
 *(3D Vision Final Project, UNIST, 2024)*  
+<br>
+
+| [Project Page](#) | [Report (PDF)](./assets/LangGrouping_Report.pdf) | [Video Demo](#) |
+
 ---
 
 This repository contains the implementation of **LangGrouping**, a 3D vision project exploring language-guided Gaussian-based segmentation and grouping for multi-view scenes.  
@@ -16,11 +20,12 @@ The project extends the idea of **language-conditioned feature learning** in 3D 
 **LangGrouping** combines multi-view visual reconstruction with text-guided reasoning to cluster and segment 3D regions.  
 Our pipeline integrates:
 
-- Using **SAM**'s highest level segmentation map and Tracker for object-wise multi-view consistency
-- Inject **Language features** extracted from pretrained CLIP encoders in to **3D Gaussian splats**.  
+- Using **SAM**'s highest level segmentation map and Tracker for object-wise multi-view consistency  
+- Inject **Language features** extracted from pretrained CLIP encoders into **3D Gaussian splats**  
 - **Object-centric** contrastive learning for semantic region clustering  
 
-This work is inspired by *LangSplat (CVPR 2024 Highlight)* and *Gaussian Grouping(ECCV 2024)*.
+This work is inspired by [*LangSplat (CVPR 2024 Highlight)*](https://github.com/minghanqin/LangSplat) and [*Gaussian Grouping (ECCV 2024)*](https://github.com/lkeab/gaussian-grouping).
+
 
 ---
 
