@@ -6,7 +6,7 @@
 *(3D Vision Final Project, UNIST, 2024)*  
 <br>
 
-| [Project Page](#) | [Report (PDF)](./assets/LangGrouping_Report.pdf) | [Video Demo](#) |
+[Report (PDF)](./LangGrouping_Report.pdf)
 
 ---
 
