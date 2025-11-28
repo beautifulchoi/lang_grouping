@@ -6,7 +6,7 @@
 *(3D Vision Final Project, UNIST, 2024)*  
 <br>
 
-[Report (PDF)](./_24S_3DVision_final_report.pdf)
+[Report (PDF)](./assets/_24S_3DVision_final_report.pdf)
 
 ---
 
